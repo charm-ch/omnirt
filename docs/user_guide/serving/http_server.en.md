@@ -54,7 +54,9 @@ omnirt serve \
 | `POST` | `/v1/videos/generations` | OpenAI-compatible video generation |
 | `WS` | `/v1/realtime` | minimal OpenAI Realtime subset |
 | `WS` | `/` | FlashTalk-compatible root alias for `ws://127.0.0.1:8765` deployments |
-| `WS` | `/v1/avatar/flashtalk` | FlashTalk-compatible realtime avatar entry point |
+| `GET` | `/v1/audio2video/models` | realtime audio2video model availability |
+| `WS` | `/v1/audio2video/{model}` | FlashTalk-compatible realtime audio2video entry point |
+| `WS` | `/v1/avatar/{model}` | compatibility alias for older OpenTalking clients |
 | `WS` | `/v1/avatar/realtime` | OmniRT Native Realtime Avatar entry point |
 
 `POST /v1/jobs` is currently reserved and is not the submission entry point.

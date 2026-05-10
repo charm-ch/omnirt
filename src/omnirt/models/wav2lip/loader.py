@@ -55,6 +55,38 @@ def detect_wav2lip_variant(state_dict: dict[str, Any]) -> tuple[str, int]:
     return "wav2lip96", 96
 
 
+def _try_import_torch_npu() -> bool:
+    try:
+        import torch_npu  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+def _resolve_torch_device(torch: Any, requested: str) -> str:
+    raw = (requested or "auto").strip().lower()
+    npu_index = os.environ.get("OMNIRT_WAV2LIP_NPU_INDEX", "0").strip() or "0"
+    if raw in {"", "auto"}:
+        if _try_import_torch_npu() and getattr(torch, "npu", None) is not None:
+            try:
+                if torch.npu.is_available():
+                    return f"npu:{npu_index}"
+            except Exception:
+                pass
+        if torch.cuda.is_available():
+            return "cuda"
+        return "cpu"
+    if raw == "npu":
+        return f"npu:{npu_index}"
+    if raw.startswith("npu"):
+        _try_import_torch_npu()
+        return raw
+    if raw.startswith("cuda") and not torch.cuda.is_available():
+        return "cpu"
+    return raw
+
+
 def load_wav2lip_torch(weights: Path, device: str) -> Any:
     try:
         import torch
@@ -63,9 +95,9 @@ def load_wav2lip_torch(weights: Path, device: str) -> Any:
     from omnirt.models.wav2lip.model_defs import Wav2Lip256, Wav2Lip384
     from omnirt.models.wav2lip.network import Wav2Lip
 
-    if device.startswith("cuda") and not torch.cuda.is_available():
-        device = "cpu"
-    checkpoint = torch.load(weights, map_location=device)
+    device = _resolve_torch_device(torch, device)
+    map_location = "cpu" if device.startswith("npu") else device
+    checkpoint = torch.load(weights, map_location=map_location)
     state_dict = checkpoint.get("state_dict", checkpoint)
     clean_state_dict = {
         key.replace("module.", "", 1): value

@@ -116,9 +116,11 @@ OmniRT 原生请求与 `GenerateRequest` 对齐：
 
 ## 实时数字人 WebSocket
 
-OmniRT 同时提供两条实时数字人入口：
+OmniRT 同时提供 audio2video 流式入口和原生实时数字人入口：
 
-- `WS /v1/avatar/flashtalk`：FlashTalk-compatible 兼容层，服务 OpenTalking 现有客户端；`/` 也是该入口的别名，适合 `ws://127.0.0.1:8765` 这种部署。
+- `GET /v1/audio2video/models`：返回 flashtalk / wav2lip 等流式模型是否可用。
+- `WS /v1/audio2video/{model}`：FlashTalk-compatible 兼容层，服务 OpenTalking 现有客户端；`/` 也是 flashtalk 入口的别名，适合 `ws://127.0.0.1:8765` 这种部署。
+- `WS /v1/avatar/{model}`：兼容旧版 OpenTalking 的别名。
 - `WS /v1/avatar/realtime`：OmniRT 原生 Realtime Avatar 协议，面向新集成，提供 `session_id`、`trace_id`、结构化错误和 chunk metrics。
 
 二进制音视频帧复用 `AUDI` / `VIDX` framing。详细协议见 [FlashTalk WebSocket](../serving/flashtalk_ws.md) 与 [Realtime Avatar WebSocket](../serving/realtime_avatar_ws.md)。

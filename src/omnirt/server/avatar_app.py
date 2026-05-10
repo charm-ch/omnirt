@@ -16,6 +16,15 @@ def _allowed_frame_roots_from_env() -> list[str]:
     return [item.strip() for item in raw.split(os.pathsep) if item.strip()]
 
 
+def _avatar_model_ws_urls_from_env() -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for model in ("flashtalk", "wav2lip", "musetalk", "flashhead"):
+        raw = os.environ.get(f"OMNIRT_AVATAR_{model.upper()}_WS_URL", "").strip()
+        if raw:
+            mapping[model] = raw
+    return mapping
+
+
 def create_avatar_app(*, default_backend: str = "auto") -> FastAPI:
     app = FastAPI(title="OmniRT Avatar", version="1.0.0")
     runtime = FakeRealtimeAvatarRuntime()
@@ -26,6 +35,7 @@ def create_avatar_app(*, default_backend: str = "auto") -> FastAPI:
         )
     app.state.default_backend = default_backend
     app.state.default_request_config = {}
+    app.state.avatar_model_ws_urls = _avatar_model_ws_urls_from_env()
     app.state.realtime_avatar_service = RealtimeAvatarService(
         runtime=runtime,
         allowed_frame_roots=_allowed_frame_roots_from_env(),

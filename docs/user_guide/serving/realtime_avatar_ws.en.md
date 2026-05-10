@@ -6,7 +6,15 @@ OmniRT Native Realtime Avatar WebSocket is the long-term protocol for model-agno
 
 ```text
 WS /v1/avatar/realtime
+GET /v1/audio2video/models
+WS /v1/audio2video/flashtalk
+WS /v1/audio2video/wav2lip
 ```
+
+`/v1/audio2video/flashtalk` and `/v1/audio2video/wav2lip` are the public
+FlashTalk-compatible streaming paths for OpenTalking. `/v1/avatar/flashtalk`
+and `/v1/avatar/wav2lip` remain compatibility aliases. `/v1/avatar/realtime`
+is the model-agnostic control-plane protocol.
 
 ## Session create
 

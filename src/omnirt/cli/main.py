@@ -1089,7 +1089,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
             return 2
         from omnirt.engine import probe_worker_health
-        from omnirt.server import create_app
+        from omnirt.server import create_app as create_server_app
 
         try:
             remote_workers = parse_remote_worker_specs(args.remote_worker or [])
@@ -1102,7 +1102,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             except Exception as exc:
                 print(f"error: remote worker {worker['worker_id']} is unreachable: {exc}", file=sys.stderr)
                 return 2
-        app = create_app(
+        app = create_server_app(
             default_backend=args.backend,
             max_concurrency=args.max_concurrency,
             pipeline_cache_size=args.pipeline_cache_size,
@@ -1157,7 +1157,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 file=sys.stderr,
             )
             return 2
-        app = create_app(default_backend=args.backend, max_concurrency=1, pipeline_cache_size=1)
+        from omnirt.server import create_app as create_server_app
+
+        app = create_server_app(default_backend=args.backend, max_concurrency=1, pipeline_cache_size=1)
         uvicorn.run(app, host=args.host, port=args.port)
         return 0
 

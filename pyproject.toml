@@ -51,6 +51,13 @@ runtime = [
   "torch>=2.1",
   "transformers>=4.51",
 ]
+wav2lip-cuda = [
+  "librosa>=0.10",
+  "opencv-python-headless>=4.8",
+  "scipy>=1.10",
+  "torch>=2.1",
+  "tqdm>=4.65",
+]
 server = [
   "fastapi>=0.110",
   "python-multipart>=0.0.9",
@@ -72,3 +79,11 @@ where = ["src"]
 testpaths = ["tests"]
 pythonpath = [".", "src"]
 addopts = "-q"
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }

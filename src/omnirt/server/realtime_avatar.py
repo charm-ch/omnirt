@@ -83,7 +83,7 @@ class RealtimeAvatarSession:
     ref_frame_metadata_path: str | None = None
     audio: AvatarAudioSpec = field(default_factory=AvatarAudioSpec)
     video: AvatarVideoSpec = field(default_factory=AvatarVideoSpec)
-    enable_enhanced_postprocessing: bool = False
+    wav2lip_postprocess_mode: str = "easy_improved"
     preprocessed: bool = False
     mouth_metadata: dict[str, Any] = field(default_factory=dict)
     chunk_index: int = 0
@@ -97,7 +97,7 @@ class RealtimeAvatarSession:
             "audio": self.audio.to_dict(),
             "video": self.video.to_dict(),
             "reference_mode": self.reference_mode,
-            "enable_enhanced_postprocessing": self.enable_enhanced_postprocessing,
+            "wav2lip_postprocess_mode": self.wav2lip_postprocess_mode,
             "preprocessed": self.preprocessed,
             "mouth_metadata": self.mouth_metadata,
         }
@@ -160,6 +160,46 @@ def _as_bool(value: object, *, default: bool = False) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "on"}
     return bool(value)
+
+
+WAV2LIP_POSTPROCESS_MODES = {"basic", "opentalking_improved", "easy_improved", "easy_enhanced"}
+DEFAULT_WAV2LIP_POSTPROCESS_MODE = "easy_improved"
+
+
+def _parse_wav2lip_postprocess_mode(raw: object) -> str:
+    if raw is None:
+        return DEFAULT_WAV2LIP_POSTPROCESS_MODE
+    mode = str(raw).strip().lower().replace("-", "_")
+    return mode if mode in WAV2LIP_POSTPROCESS_MODES else DEFAULT_WAV2LIP_POSTPROCESS_MODE
+
+
+def _wav2lip_max_long_edge() -> int:
+    raw = os.environ.get("OMNIRT_WAV2LIP_MAX_LONG_EDGE", "0").strip()
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 0
+
+
+def _scale_video_to_max_long_edge(video: "AvatarVideoSpec", max_long_edge: int) -> "AvatarVideoSpec":
+    if max_long_edge <= 0:
+        return video
+    long_edge = max(video.width, video.height)
+    if long_edge <= max_long_edge:
+        return video
+    scale = max_long_edge / float(long_edge)
+    width = max(2, int(round(video.width * scale)))
+    height = max(2, int(round(video.height * scale)))
+    width -= width % 2
+    height -= height % 2
+    return AvatarVideoSpec(
+        fps=video.fps,
+        width=width,
+        height=height,
+        frame_count=video.frame_count,
+        motion_frames_num=video.motion_frames_num,
+        slice_len=video.slice_len,
+    )
 
 
 class FakeRealtimeAvatarRuntime:
@@ -255,12 +295,13 @@ class RealtimeAvatarService:
             motion_frames_num=int(config.get("motion_frames_num", 1)),
             slice_len=int(config.get("slice_len", 28)),
         )
+        if model == "wav2lip":
+            video = _scale_video_to_max_long_edge(video, _wav2lip_max_long_edge())
         audio = AvatarAudioSpec(
             sample_rate=sample_rate,
             channels=int(config.get("channels", 1)),
             chunk_samples=int(config.get("chunk_samples", video.slice_len * sample_rate // video.fps)),
         )
-        enhanced_default = _as_bool(os.getenv("OMNIRT_WAV2LIP_ENABLE_ENHANCED_POSTPROCESSING"), default=False)
         mouth_metadata = config.get("mouth_metadata") or {}
         if not isinstance(mouth_metadata, dict):
             raise RealtimeAvatarError("bad_mouth_metadata", "mouth_metadata must be an object.")
@@ -282,9 +323,9 @@ class RealtimeAvatarService:
             ref_frame_metadata_path=ref_frame_metadata_path_str,
             audio=audio,
             video=video,
-            enable_enhanced_postprocessing=_as_bool(
-                config.get("enable_enhanced_postprocessing"),
-                default=enhanced_default,
+            wav2lip_postprocess_mode=_parse_wav2lip_postprocess_mode(
+                config.get("wav2lip_postprocess_mode")
+                or os.getenv("OMNIRT_WAV2LIP_POSTPROCESS_MODE")
             ),
             preprocessed=preprocessed,
             mouth_metadata=mouth_metadata,

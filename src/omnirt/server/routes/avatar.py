@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import base64
+import asyncio
 import json
 from typing import Any
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 
@@ -14,8 +16,47 @@ from omnirt.server.realtime_avatar import RealtimeAvatarError
 router = APIRouter()
 
 
+def _avatar_runtime_lock(request_or_websocket: Request | WebSocket) -> asyncio.Lock:
+    lock = getattr(request_or_websocket.app.state, "avatar_runtime_lock", None)
+    if lock is None:
+        lock = asyncio.Lock()
+        request_or_websocket.app.state.avatar_runtime_lock = lock
+    return lock
+
+
+async def _push_audio_chunk_async(
+    websocket: WebSocket,
+    service: Any,
+    session_id: str,
+    payload: bytes,
+) -> tuple[bytes, dict[str, object]]:
+    async with _avatar_runtime_lock(websocket):
+        return await asyncio.to_thread(service.push_audio_chunk, session_id, payload)
+
+
+async def _preload_reference_async(
+    request: Request,
+    service: Any,
+    *,
+    model: str,
+    backend: str,
+    config: dict[str, Any],
+) -> dict[str, object]:
+    async with _avatar_runtime_lock(request):
+        return await asyncio.to_thread(
+            service.preload_reference,
+            model=model,
+            backend=backend,
+            config=config,
+        )
+
+
 def _error_payload(exc: RealtimeAvatarError) -> dict[str, str]:
     return {"type": "error", "code": exc.code, "message": str(exc)}
+
+
+def _runtime_error_payload(exc: Exception) -> dict[str, str]:
+    return {"type": "error", "code": "runtime_error", "message": str(exc)}
 
 
 def _decode_b64_image(value: Any) -> bytes:
@@ -39,7 +80,7 @@ def _wav2lip_config_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "reference_mode",
         "ref_frame_dir",
         "ref_frame_metadata_path",
-        "enable_enhanced_postprocessing",
+        "wav2lip_postprocess_mode",
         "mouth_metadata",
         "preprocessed",
     ):
@@ -48,6 +89,115 @@ def _wav2lip_config_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return config
 
 
+def _avatar_model_ws_urls(request_or_websocket: Request | WebSocket) -> dict[str, str]:
+    raw = getattr(request_or_websocket.app.state, "avatar_model_ws_urls", {}) or {}
+    return {
+        str(model).strip().lower(): str(url).strip()
+        for model, url in dict(raw).items()
+        if str(model).strip() and str(url).strip()
+    }
+
+
+async def _is_ws_url_reachable(url: str) -> bool:
+    parts = urlsplit(url)
+    if parts.scheme not in {"ws", "wss"} or not parts.hostname:
+        return False
+    try:
+        try:
+            from websockets.asyncio.client import connect
+        except ImportError:
+            from websockets import connect  # type: ignore
+        async with connect(url, open_timeout=0.5, close_timeout=0.2, max_size=1024):
+            pass
+        return True
+    except Exception:
+        return False
+
+
+async def _proxy_websocket(websocket: WebSocket, target_url: str) -> None:
+    await websocket.accept()
+    try:
+        try:
+            from websockets.asyncio.client import connect
+        except ImportError:
+            from websockets import connect  # type: ignore
+        async with connect(target_url, max_size=50 * 1024 * 1024) as upstream:
+            async def client_to_upstream() -> None:
+                while True:
+                    message = await websocket.receive()
+                    if message.get("type") == "websocket.disconnect":
+                        await upstream.close()
+                        return
+                    if message.get("text") is not None:
+                        await upstream.send(message["text"])
+                    elif message.get("bytes") is not None:
+                        await upstream.send(message["bytes"])
+
+            async def upstream_to_client() -> None:
+                async for message in upstream:
+                    if isinstance(message, bytes):
+                        await websocket.send_bytes(message)
+                    else:
+                        await websocket.send_text(message)
+
+            done, pending = await asyncio.wait(
+                {
+                    asyncio.create_task(client_to_upstream()),
+                    asyncio.create_task(upstream_to_client()),
+                },
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+            for task in done:
+                task.result()
+    except WebSocketDisconnect:
+        return
+    except Exception as exc:
+        try:
+            await websocket.send_json({"type": "error", "message": str(exc)})
+        except Exception:
+            return
+
+
+@router.get("/v1/audio2video/models")
+@router.get("/v1/avatar/models")
+async def list_audio2video_models(request: Request) -> dict[str, object]:
+    service = request.app.state.realtime_avatar_service
+    wav2lip_connected = bool(getattr(getattr(service, "runtime", None), "wav2lip", None))
+    proxy_urls = _avatar_model_ws_urls(request)
+    flashtalk_proxy = proxy_urls.get("flashtalk")
+    wav2lip_proxy = proxy_urls.get("wav2lip")
+    flashtalk_connected = (
+        await _is_ws_url_reachable(flashtalk_proxy)
+        if flashtalk_proxy
+        else False
+    )
+    if wav2lip_proxy:
+        wav2lip_connected = await _is_ws_url_reachable(wav2lip_proxy)
+    statuses = [
+        {
+            "id": "flashtalk",
+            "connected": flashtalk_connected,
+            "reason": "proxy" if flashtalk_proxy else "fallback_runtime",
+        },
+        {
+            "id": "wav2lip",
+            "connected": wav2lip_connected,
+            "reason": (
+                "proxy"
+                if wav2lip_proxy
+                else ("wav2lip_runtime" if wav2lip_connected else "runtime_not_enabled")
+            ),
+        },
+    ]
+    return {
+        "models": [item["id"] for item in statuses if item["connected"]],
+        "statuses": statuses,
+    }
+
+
+@router.post("/v1/audio2video/wav2lip/preload")
 @router.post("/v1/avatar/wav2lip/preload")
 async def preload_wav2lip_reference(request: Request) -> dict[str, object]:
     payload = await request.json()
@@ -55,7 +205,9 @@ async def preload_wav2lip_reference(request: Request) -> dict[str, object]:
         return {"type": "error", "code": "bad_json", "message": "Expected a JSON object."}
     service = request.app.state.realtime_avatar_service
     try:
-        return service.preload_reference(
+        return await _preload_reference_async(
+            request,
+            service,
             model="wav2lip",
             backend=request.app.state.default_backend,
             config={
@@ -66,6 +218,8 @@ async def preload_wav2lip_reference(request: Request) -> dict[str, object]:
         )
     except RealtimeAvatarError as exc:
         return _error_payload(exc)
+    except Exception as exc:
+        return _runtime_error_payload(exc)
 
 
 async def _flashtalk_compatible_loop(websocket: WebSocket, *, model: str) -> None:
@@ -102,9 +256,7 @@ async def _flashtalk_compatible_loop(websocket: WebSocket, *, model: str) -> Non
                                     config[key] = payload.get(key)
                             config.update(
                                 {
-                                    "enable_enhanced_postprocessing": payload.get(
-                                        "enable_enhanced_postprocessing"
-                                    ),
+                                    "wav2lip_postprocess_mode": payload.get("wav2lip_postprocess_mode"),
                                     "mouth_metadata": payload.get("mouth_metadata") or {},
                                 }
                             )
@@ -123,7 +275,7 @@ async def _flashtalk_compatible_loop(websocket: WebSocket, *, model: str) -> Non
                         {
                             "type": "init_ok",
                             "model": session.model,
-                            "enable_enhanced_postprocessing": session.enable_enhanced_postprocessing,
+                            "wav2lip_postprocess_mode": session.wav2lip_postprocess_mode,
                             "frame_num": session.video.frame_count,
                             "motion_frames_num": session.video.motion_frames_num,
                             "slice_len": session.video.slice_len,
@@ -146,9 +298,17 @@ async def _flashtalk_compatible_loop(websocket: WebSocket, *, model: str) -> Non
                     await websocket.send_json({"type": "error", "message": "No active session. Send 'init' first."})
                     continue
                 try:
-                    video_payload, _metrics = service.push_audio_chunk(session_id, message["bytes"])
+                    video_payload, _metrics = await _push_audio_chunk_async(
+                        websocket,
+                        service,
+                        session_id,
+                        message["bytes"],
+                    )
                 except RealtimeAvatarError as exc:
                     await websocket.send_json({"type": "error", "message": str(exc), "code": exc.code})
+                    continue
+                except Exception as exc:
+                    await websocket.send_json(_runtime_error_payload(exc))
                     continue
                 await websocket.send_bytes(video_payload)
     except WebSocketDisconnect:
@@ -159,17 +319,27 @@ async def _flashtalk_compatible_loop(websocket: WebSocket, *, model: str) -> Non
 
 
 @router.websocket("/")
+@router.websocket("/v1/audio2video/flashtalk")
 @router.websocket("/v1/avatar/flashtalk")
 async def flashtalk_compatible_avatar(websocket: WebSocket):
     """FlashTalk-compatible WS used by current OpenTalking clients."""
 
+    proxy_url = _avatar_model_ws_urls(websocket).get("flashtalk")
+    if proxy_url:
+        await _proxy_websocket(websocket, proxy_url)
+        return
     await _flashtalk_compatible_loop(websocket, model="soulx-flashtalk-14b")
 
 
+@router.websocket("/v1/audio2video/wav2lip")
 @router.websocket("/v1/avatar/wav2lip")
 async def wav2lip_compatible_avatar(websocket: WebSocket):
     """Wav2Lip-compatible WS used by OpenTalking avatar synthesis."""
 
+    proxy_url = _avatar_model_ws_urls(websocket).get("wav2lip")
+    if proxy_url:
+        await _proxy_websocket(websocket, proxy_url)
+        return
     await _flashtalk_compatible_loop(websocket, model="wav2lip")
 
 
@@ -244,9 +414,17 @@ async def native_realtime_avatar(websocket: WebSocket):
                     )
                     continue
                 try:
-                    video_payload, metrics = service.push_audio_chunk(session_id, message["bytes"])
+                    video_payload, metrics = await _push_audio_chunk_async(
+                        websocket,
+                        service,
+                        session_id,
+                        message["bytes"],
+                    )
                 except RealtimeAvatarError as exc:
                     await websocket.send_json(_error_payload(exc))
+                    continue
+                except Exception as exc:
+                    await websocket.send_json(_runtime_error_payload(exc))
                     continue
                 await websocket.send_json(metrics)
                 await websocket.send_bytes(video_payload)

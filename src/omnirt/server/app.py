@@ -24,6 +24,15 @@ def _allowed_frame_roots_from_env() -> list[str]:
     return [item.strip() for item in raw.split(os.pathsep) if item.strip()]
 
 
+def _avatar_model_ws_urls_from_env() -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for model in ("flashtalk", "wav2lip", "musetalk", "flashhead"):
+        raw = os.environ.get(f"OMNIRT_AVATAR_{model.upper()}_WS_URL", "").strip()
+        if raw:
+            mapping[model] = raw
+    return mapping
+
+
 def _create_realtime_avatar_service() -> RealtimeAvatarService:
     allowed_frame_roots = _allowed_frame_roots_from_env()
     if os.environ.get("OMNIRT_WAV2LIP_RUNTIME", "").strip().lower() not in {"1", "true", "opentalking"}:
@@ -91,6 +100,7 @@ def create_app(
     app.state.default_backend = default_backend
     app.state.default_request_config = dict(default_request_config or {})
     app.state.model_aliases = load_model_aliases(model_aliases_path)
+    app.state.avatar_model_ws_urls = _avatar_model_ws_urls_from_env()
     app.state.realtime_avatar_service = _create_realtime_avatar_service()
     app.add_middleware(ApiKeyMiddleware, api_keys=load_api_keys(api_key_file))
     app.include_router(health_router)

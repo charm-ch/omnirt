@@ -23,14 +23,14 @@ the reference image plus mouth metadata.
 ## Inference Flow
 
 - The WebSocket init payload accepts a reference image, video settings,
-  `enable_enhanced_postprocessing`, and `mouth_metadata`.
+  `wav2lip_postprocess_mode`, and `mouth_metadata`.
 - Audio chunks are converted into Wav2Lip mel chunks, then the model predicts a
   generated mouth patch.
 - The runtime composites the generated patch back into the original avatar
   frame and returns JPEG frame sequences to OpenTalking/WebRTC.
 - To keep the basic and enhanced paths comparable, model input cropping still
   follows the face-detector crop. Mouth metadata is used only for blend geometry,
-  masks, and enhanced postprocessing.
+  masks, and postprocess mode.
 
 ## Enhanced Postprocessing
 
@@ -41,8 +41,8 @@ the reference image plus mouth metadata.
   lower-lip clipping.
 - Added optional jaw motion blending so the chin area can follow mouth movement
   at low alpha, reducing the visual mismatch where only the lips move.
-- Enhanced postprocessing is controlled by
-  `OMNIRT_WAV2LIP_ENABLE_ENHANCED_POSTPROCESSING`, which makes basic/enhanced
+- Postprocess mode is controlled by
+  `OMNIRT_WAV2LIP_POSTPROCESS_MODE`, which makes basic/opentalking_improved/easy_improved/easy_enhanced
   comparisons straightforward in deployment.
 - Lower-lip and jaw behavior are controlled independently through
   `OMNIRT_WAV2LIP_LOWER_LIP_DYNAMIC_EXPAND`,

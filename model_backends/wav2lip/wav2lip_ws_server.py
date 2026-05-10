@@ -170,7 +170,7 @@ def _audio_chunk_bytes(slice_len: int, fps: int) -> int:
     return samples * 2
 
 
-def _import_wav2lip_vendor(repo: Path) -> tuple[Any, Any, Any]:
+def _import_wav2lip_vendor(repo: Path) -> tuple[Any, Any]:
     """Import Rudrabha/Wav2Lip modules (requires repo root on sys.path and cwd for hparams)."""
     repo = repo.expanduser().resolve()
     if str(repo) not in sys.path:
@@ -182,9 +182,7 @@ def _import_wav2lip_vendor(repo: Path) -> tuple[Any, Any, Any]:
 
         import face_detection as fd_mod  # type: ignore
 
-        from models.wav2lip import Wav2Lip as Wav2LipCls  # type: ignore
-
-        return audio_mod, fd_mod, Wav2LipCls
+        return audio_mod, fd_mod
     finally:
         os.chdir(prev)
 
@@ -233,13 +231,15 @@ def _log_devices(inference: str, face_det: str) -> None:
     LOG.info("Wav2Lip inference device=%s | face_detection device=%s", inference, face_det)
 
 
-def _load_wav2lip_model(path: Path, device: torch.device, cls: Any) -> torch.nn.Module:
-    ckpt = torch.load(str(path), map_location=device)
-    state_dict = ckpt.get("state_dict", ckpt)
-    clean = {k.replace("module.", "", 1): v for k, v in state_dict.items()}
-    model = cls()
-    model.load_state_dict(clean)
-    return model.to(device).eval()
+def _load_wav2lip_model(path: Path, device: torch.device) -> tuple[torch.nn.Module, int]:
+    from omnirt.models.wav2lip.loader import load_wav2lip_torch
+
+    bundle = load_wav2lip_torch(path, str(device))
+    model = bundle["model"]
+    input_size = int(bundle.get("input_size") or 96)
+    variant = str(bundle.get("variant") or "unknown")
+    LOG.info("Loaded Wav2Lip variant=%s input_size=%s", variant, input_size)
+    return model, input_size
 
 
 def _face_detect_static(
@@ -361,29 +361,27 @@ class _Runtime:
         self.device = torch.device(self.device_str)
         self.face_det_device_str = _face_det_device_str(self.device_str)
         self.model: torch.nn.Module | None = None
+        self.input_size: int | None = None
         self._audio_mod: Any | None = None
         self._fd_mod: Any | None = None
-        self._wav2lip_cls: Any | None = None
         self.frame_num, self.motion_frames_num, self.slice_len = _slice_params()
         self.audio_chunk_samples = self.slice_len * SAMPLE_RATE // int(self.fps)
 
-    def _vendor(self) -> tuple[Any, Any, Any]:
+    def _vendor(self) -> tuple[Any, Any]:
         if self._audio_mod is None:
-            self._audio_mod, self._fd_mod, self._wav2lip_cls = _import_wav2lip_vendor(
-                self.wav2lip_repo
-            )
-        assert self._audio_mod and self._fd_mod and self._wav2lip_cls
-        return self._audio_mod, self._fd_mod, self._wav2lip_cls
+            self._audio_mod, self._fd_mod = _import_wav2lip_vendor(self.wav2lip_repo)
+        assert self._audio_mod and self._fd_mod
+        return self._audio_mod, self._fd_mod
 
     def face_align_module(self) -> Any:
         return self._vendor()[1]
 
     def ensure_model(self) -> torch.nn.Module:
         if self.model is None:
-            audio_mod, _, wav2lip_cls = self._vendor()
+            audio_mod, _ = self._vendor()
             _ = audio_mod  # noqa: F841 — vendor audio/hparams import side effects
             LOG.info("Loading Wav2Lip weights from %s", self.checkpoint)
-            self.model = _load_wav2lip_model(self.checkpoint, self.device, wav2lip_cls)
+            self.model, self.input_size = _load_wav2lip_model(self.checkpoint, self.device)
         return self.model
 
     def synthesize(
@@ -405,7 +403,7 @@ class _Runtime:
 
         face_img, coords = face_pack
         y1, y2, x1, x2 = coords
-        img_size = 96
+        img_size = self.input_size or 96
         out_frames: list[np.ndarray] = []
 
         for start in range(0, len(mel_chunks), self.wav2lip_batch_size):

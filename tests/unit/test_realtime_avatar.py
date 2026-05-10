@@ -14,12 +14,14 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from omnirt.server import create_app  # noqa: E402
 from omnirt.server.realtime_avatar import (  # noqa: E402
+    AvatarVideoSpec,
     MAGIC_AUDIO,
     MAGIC_VIDEO,
     RealtimeAvatarService,
     RealtimeAvatarError,
     decode_jpeg_sequence,
     encode_jpeg_sequence,
+    _scale_video_to_max_long_edge,
 )  # noqa: E402
 
 
@@ -47,10 +49,21 @@ def test_video_jpeg_sequence_rejects_malformed_frame_length() -> None:
     assert exc.value.code == "bad_video_chunk"
 
 
+def test_wav2lip_scaled_video_dimensions_are_h264_safe() -> None:
+    video = AvatarVideoSpec(width=830, height=1108, fps=30, slice_len=28)
+
+    scaled = _scale_video_to_max_long_edge(video, 832)
+
+    assert scaled.width % 2 == 0
+    assert scaled.height % 2 == 0
+    assert scaled.width == 622
+    assert scaled.height == 832
+
+
 def test_flashtalk_compatible_ws_init_generate_and_close() -> None:
     client = TestClient(create_app(default_backend="cpu-stub"))
 
-    with client.websocket_connect("/v1/avatar/flashtalk") as ws:
+    with client.websocket_connect("/v1/audio2video/flashtalk") as ws:
         ws.send_json({"type": "init", "ref_image": _image_b64(), "prompt": "talk", "seed": 1})
         init = ws.receive_json()
         assert init["type"] == "init_ok"
@@ -66,6 +79,30 @@ def test_flashtalk_compatible_ws_init_generate_and_close() -> None:
         assert ws.receive_json()["type"] == "close_ok"
 
 
+def test_flashtalk_compatible_ws_offloads_audio_push(monkeypatch: pytest.MonkeyPatch) -> None:
+    from omnirt.server.routes import avatar as avatar_routes
+
+    calls = 0
+    real_to_thread = avatar_routes.asyncio.to_thread
+
+    async def tracking_to_thread(func, /, *args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return await real_to_thread(func, *args, **kwargs)
+
+    monkeypatch.setattr(avatar_routes.asyncio, "to_thread", tracking_to_thread)
+    client = TestClient(create_app(default_backend="cpu-stub"))
+
+    with client.websocket_connect("/v1/avatar/flashtalk") as ws:
+        ws.send_json({"type": "init", "ref_image": _image_b64()})
+        init = ws.receive_json()
+        ws.send_bytes(_audio_payload(init["slice_len"] * 16000 // init["fps"]))
+        video = ws.receive_bytes()
+
+    assert video[:4] == MAGIC_VIDEO
+    assert calls == 1
+
+
 def test_flashtalk_compatible_ws_root_alias_for_opentalking_default() -> None:
     client = TestClient(create_app(default_backend="cpu-stub"))
 
@@ -74,10 +111,77 @@ def test_flashtalk_compatible_ws_root_alias_for_opentalking_default() -> None:
         assert ws.receive_json()["type"] == "init_ok"
 
 
+def test_audio2video_models_reports_wav2lip_unavailable_by_default() -> None:
+    client = TestClient(create_app(default_backend="cpu-stub"))
+
+    response = client.get("/v1/audio2video/models")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["models"] == []
+    statuses = {item["id"]: item for item in payload["statuses"]}
+    assert statuses["flashtalk"]["connected"] is False
+    assert statuses["flashtalk"]["reason"] == "fallback_runtime"
+    assert statuses["wav2lip"]["connected"] is False
+
+
+def test_avatar_models_alias_reports_wav2lip_unavailable_by_default() -> None:
+    client = TestClient(create_app(default_backend="cpu-stub"))
+
+    response = client.get("/v1/avatar/models")
+
+    assert response.status_code == 200
+    assert response.json()["models"] == []
+
+
+def test_audio2video_models_reports_proxy_targets(monkeypatch: pytest.MonkeyPatch) -> None:
+    from omnirt.server.routes import avatar as avatar_routes
+
+    async def fake_reachable(_url: str) -> bool:
+        return True
+
+    monkeypatch.setattr(avatar_routes, "_is_ws_url_reachable", fake_reachable)
+    client = TestClient(create_app(default_backend="cpu-stub"))
+    client.app.state.avatar_model_ws_urls = {
+        "flashtalk": "ws://127.0.0.1:8765",
+        "wav2lip": "ws://127.0.0.1:8767",
+    }
+
+    response = client.get("/v1/audio2video/models")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["models"] == ["flashtalk", "wav2lip"]
+    statuses = {item["id"]: item for item in payload["statuses"]}
+    assert statuses["flashtalk"]["reason"] == "proxy"
+    assert statuses["wav2lip"]["connected"] is True
+
+
+def test_audio2video_models_reads_proxy_targets_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    from omnirt.server.routes import avatar as avatar_routes
+
+    async def fake_reachable(_url: str) -> bool:
+        return True
+
+    monkeypatch.setenv("OMNIRT_AVATAR_FLASHTALK_WS_URL", "ws://127.0.0.1:8765")
+    monkeypatch.setenv("OMNIRT_AVATAR_WAV2LIP_WS_URL", "ws://127.0.0.1:8767")
+    monkeypatch.setattr(avatar_routes, "_is_ws_url_reachable", fake_reachable)
+
+    client = TestClient(create_app(default_backend="cpu-stub"))
+    response = client.get("/v1/audio2video/models")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["models"] == ["flashtalk", "wav2lip"]
+    statuses = {item["id"]: item for item in payload["statuses"]}
+    assert statuses["flashtalk"]["reason"] == "proxy"
+    assert statuses["wav2lip"]["reason"] == "proxy"
+
+
 def test_flashtalk_compatible_ws_errors() -> None:
     client = TestClient(create_app(default_backend="cpu-stub"))
 
-    with client.websocket_connect("/v1/avatar/flashtalk") as ws:
+    with client.websocket_connect("/v1/audio2video/flashtalk") as ws:
         ws.send_json({"type": "init"})
         missing = ws.receive_json()
         assert missing["type"] == "error"
@@ -101,6 +205,27 @@ def test_flashtalk_compatible_ws_errors() -> None:
         bad_chunk = ws.receive_json()
         assert bad_chunk["type"] == "error"
         assert bad_chunk["code"] == "bad_audio_chunk"
+
+
+def test_flashtalk_compatible_ws_reports_runtime_errors() -> None:
+    class FailingRuntime:
+        def render_chunk(self, session, pcm_s16le):
+            del session, pcm_s16le
+            raise RuntimeError("model failed")
+
+    app = create_app(default_backend="cpu-stub")
+    app.state.realtime_avatar_service = RealtimeAvatarService(runtime=FailingRuntime())
+    client = TestClient(app)
+
+    with client.websocket_connect("/v1/audio2video/flashtalk") as ws:
+        ws.send_json({"type": "init", "ref_image": _image_b64()})
+        init = ws.receive_json()
+        ws.send_bytes(_audio_payload(init["slice_len"] * 16000 // init["fps"]))
+        error = ws.receive_json()
+
+    assert error["type"] == "error"
+    assert error["code"] == "runtime_error"
+    assert "model failed" in error["message"]
 
 
 def test_native_realtime_avatar_ws_flow() -> None:
@@ -139,7 +264,7 @@ def test_native_realtime_avatar_ws_flow() -> None:
         assert ws.receive_json()["type"] == "session.closed"
 
 
-def test_wav2lip_init_accepts_enhanced_postprocessing_and_metadata() -> None:
+def test_wav2lip_init_accepts_postprocess_mode_and_metadata() -> None:
     client = TestClient(create_app(default_backend="cpu-stub"))
     metadata = {
         "source_image_hash": "abc123",
@@ -152,12 +277,12 @@ def test_wav2lip_init_accepts_enhanced_postprocessing_and_metadata() -> None:
         },
     }
 
-    with client.websocket_connect("/v1/avatar/wav2lip") as ws:
+    with client.websocket_connect("/v1/audio2video/wav2lip") as ws:
         ws.send_json(
             {
                 "type": "init",
                 "ref_image": _image_b64(),
-                "enable_enhanced_postprocessing": True,
+                "wav2lip_postprocess_mode": "opentalking_improved",
                 "mouth_metadata": metadata,
             }
         )
@@ -165,7 +290,7 @@ def test_wav2lip_init_accepts_enhanced_postprocessing_and_metadata() -> None:
 
     assert init["type"] == "init_ok"
     assert init["model"] == "wav2lip"
-    assert init["enable_enhanced_postprocessing"] is True
+    assert init["wav2lip_postprocess_mode"] == "opentalking_improved"
 
 
 def test_wav2lip_init_accepts_frame_reference_dir(tmp_path: Path) -> None:
@@ -174,7 +299,7 @@ def test_wav2lip_init_accepts_frame_reference_dir(tmp_path: Path) -> None:
     frame_dir.mkdir()
     client.app.state.realtime_avatar_service = RealtimeAvatarService(allowed_frame_roots=[tmp_path])
 
-    with client.websocket_connect("/v1/avatar/wav2lip") as ws:
+    with client.websocket_connect("/v1/audio2video/wav2lip") as ws:
         ws.send_json(
             {
                 "type": "init",
@@ -191,13 +316,34 @@ def test_wav2lip_init_accepts_frame_reference_dir(tmp_path: Path) -> None:
     assert "ref_frame_dir" not in init
 
 
+def test_wav2lip_video_dimensions_respect_max_long_edge(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OMNIRT_WAV2LIP_MAX_LONG_EDGE", "768")
+    client = TestClient(create_app(default_backend="cpu-stub"))
+
+    with client.websocket_connect("/v1/audio2video/wav2lip") as ws:
+        ws.send_json(
+            {
+                "type": "init",
+                "ref_image": _image_b64(),
+                "width": 830,
+                "height": 1108,
+                "fps": 30,
+            }
+        )
+        init = ws.receive_json()
+
+    assert init["type"] == "init_ok"
+    assert init["width"] == 574
+    assert init["height"] == 768
+
+
 def test_wav2lip_init_accepts_frame_metadata_path(tmp_path: Path) -> None:
     client = TestClient(create_app(default_backend="cpu-stub"))
     metadata_path = tmp_path / "mouth_metadata.json"
     metadata_path.write_text("{}", encoding="utf-8")
     client.app.state.realtime_avatar_service = RealtimeAvatarService(allowed_frame_roots=[tmp_path])
 
-    with client.websocket_connect("/v1/avatar/wav2lip") as ws:
+    with client.websocket_connect("/v1/audio2video/wav2lip") as ws:
         ws.send_json(
             {
                 "type": "init",
@@ -219,7 +365,7 @@ def test_wav2lip_frame_reference_rejects_paths_outside_allowed_roots(tmp_path: P
     outside.mkdir()
     client.app.state.realtime_avatar_service = RealtimeAvatarService(allowed_frame_roots=[allowed])
 
-    with client.websocket_connect("/v1/avatar/wav2lip") as ws:
+    with client.websocket_connect("/v1/audio2video/wav2lip") as ws:
         ws.send_json(
             {
                 "type": "init",
@@ -264,11 +410,11 @@ def test_wav2lip_preload_endpoint_uses_runtime_cache(tmp_path: Path) -> None:
         "height": 24,
         "fps": 30,
         "preprocessed": True,
-        "enable_enhanced_postprocessing": True,
+        "wav2lip_postprocess_mode": "opentalking_improved",
     }
 
-    first = client.post("/v1/avatar/wav2lip/preload", json=payload)
-    second = client.post("/v1/avatar/wav2lip/preload", json=payload)
+    first = client.post("/v1/audio2video/wav2lip/preload", json=payload)
+    second = client.post("/v1/audio2video/wav2lip/preload", json=payload)
 
     assert first.status_code == 200
     assert first.json()["cache_hit"] is False
@@ -277,3 +423,67 @@ def test_wav2lip_preload_endpoint_uses_runtime_cache(tmp_path: Path) -> None:
     assert len(runtime.calls) == 2
     assert runtime.calls[0].reference_mode == "frames"
     assert runtime.calls[0].preprocessed is True
+
+
+def test_wav2lip_preload_endpoint_offloads_runtime_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from omnirt.server.routes import avatar as avatar_routes
+
+    class FakePreloadRuntime:
+        def preload_reference(self, session):
+            return {"type": "preload_result", "frames": 1, "elapsed_ms": 1.0, "cache_hit": False}
+
+    calls = 0
+    real_to_thread = avatar_routes.asyncio.to_thread
+
+    async def tracking_to_thread(func, /, *args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return await real_to_thread(func, *args, **kwargs)
+
+    monkeypatch.setattr(avatar_routes.asyncio, "to_thread", tracking_to_thread)
+    frame_dir = tmp_path / "frames"
+    frame_dir.mkdir()
+    app = create_app(default_backend="cpu-stub")
+    app.state.realtime_avatar_service = RealtimeAvatarService(
+        runtime=FakePreloadRuntime(),
+        allowed_frame_roots=[tmp_path],
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/audio2video/wav2lip/preload",
+        json={"ref_frame_dir": str(frame_dir), "width": 24, "height": 24},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["type"] == "preload_result"
+    assert calls == 1
+
+
+def test_wav2lip_preload_endpoint_reports_runtime_error(tmp_path: Path) -> None:
+    class FailingPreloadRuntime:
+        def preload_reference(self, session):
+            del session
+            raise RuntimeError("preload failed")
+
+    frame_dir = tmp_path / "frames"
+    frame_dir.mkdir()
+    app = create_app(default_backend="cpu-stub")
+    app.state.realtime_avatar_service = RealtimeAvatarService(
+        runtime=FailingPreloadRuntime(),
+        allowed_frame_roots=[tmp_path],
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/audio2video/wav2lip/preload",
+        json={"ref_frame_dir": str(frame_dir), "width": 24, "height": 24},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["type"] == "error"
+    assert response.json()["code"] == "runtime_error"
+    assert "preload failed" in response.json()["message"]
