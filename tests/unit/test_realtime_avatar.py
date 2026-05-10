@@ -14,12 +14,14 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from omnirt.server import create_app  # noqa: E402
 from omnirt.server.realtime_avatar import (  # noqa: E402
+    AvatarVideoSpec,
     MAGIC_AUDIO,
     MAGIC_VIDEO,
     RealtimeAvatarService,
     RealtimeAvatarError,
     decode_jpeg_sequence,
     encode_jpeg_sequence,
+    _scale_video_to_max_long_edge,
 )  # noqa: E402
 
 
@@ -45,6 +47,17 @@ def test_video_jpeg_sequence_rejects_malformed_frame_length() -> None:
         decode_jpeg_sequence(payload)
 
     assert exc.value.code == "bad_video_chunk"
+
+
+def test_wav2lip_scaled_video_dimensions_are_h264_safe() -> None:
+    video = AvatarVideoSpec(width=830, height=1108, fps=30, slice_len=28)
+
+    scaled = _scale_video_to_max_long_edge(video, 832)
+
+    assert scaled.width % 2 == 0
+    assert scaled.height % 2 == 0
+    assert scaled.width == 622
+    assert scaled.height == 832
 
 
 def test_flashtalk_compatible_ws_init_generate_and_close() -> None:
@@ -320,7 +333,7 @@ def test_wav2lip_video_dimensions_respect_max_long_edge(monkeypatch: pytest.Monk
         init = ws.receive_json()
 
     assert init["type"] == "init_ok"
-    assert init["width"] == 575
+    assert init["width"] == 574
     assert init["height"] == 768
 
 

@@ -1,8 +1,10 @@
-# Minimal pip deps for model_backends/wav2lip/wav2lip_ws_server.py
+# Minimal non-torch pip deps for model_backends/wav2lip/wav2lip_ws_server.py
 # Rudrabha/Wav2Lip/audio.py in this repo's clone is patched for librosa>=0.10
 # (librosa.filters.mel keyword-only); use that clone or apply the same one-line fix.
 # Also install Rudrabha/Wav2Lip/requirements.txt inside your runtime env.
-torch>=2.0
+# Install torch through `uv sync --extra wav2lip-cuda` so uv uses the
+# CUDA wheel index declared in pyproject.toml. Installing bare `torch>=2.0`
+# from PyPI can select a CUDA build newer than the host driver supports.
 numpy>=1.22
 opencv-python-headless>=4.8
 websockets>=12.0

@@ -12,6 +12,29 @@ import tempfile
 import time
 from typing import Any
 
+
+def _configure_wav2lip_cpu_thread_env() -> int:
+    """Keep CPU-side video work from oversubscribing host threads by default."""
+
+    raw = os.environ.get("OMNIRT_WAV2LIP_CPU_THREADS", "4").strip()
+    try:
+        threads = max(1, int(raw))
+    except ValueError:
+        threads = 4
+    value = str(threads)
+    for key in (
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "OPENCV_FOR_THREADS_NUM",
+    ):
+        os.environ.setdefault(key, value)
+    return threads
+
+
+_configure_wav2lip_cpu_thread_env()
+
 import cv2
 import numpy as np
 
@@ -109,6 +132,29 @@ class Wav2LipRealtimeRuntime:
         self._face_detector: FaceAlignment | None = None
         self._sessions: dict[str, _SessionState] = {}
         self._frame_sequence_cache: dict[str, list[_PreparedFrame]] = {}
+        self._configure_cpu_thread_limits()
+
+    @staticmethod
+    def _configure_cpu_thread_limits() -> int:
+        threads = _configure_wav2lip_cpu_thread_env()
+        try:
+            cv2.setNumThreads(threads)
+        except Exception:
+            log.debug("Failed to set OpenCV thread count", exc_info=True)
+        try:
+            import torch
+
+            torch.set_num_threads(threads)
+            if not getattr(torch, "_omnirt_wav2lip_interop_configured", False):
+                interop_threads = max(
+                    1,
+                    int(os.environ.get("OMNIRT_WAV2LIP_INTEROP_THREADS", "1").strip() or "1"),
+                )
+                torch.set_num_interop_threads(interop_threads)
+                setattr(torch, "_omnirt_wav2lip_interop_configured", True)
+        except Exception:
+            log.debug("Failed to set torch thread count", exc_info=True)
+        return threads
 
     def render_chunk(self, session: RealtimeAvatarSession, pcm_s16le: bytes) -> bytes:
         state = self._session_state(session)

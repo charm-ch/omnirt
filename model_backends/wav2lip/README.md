@@ -25,7 +25,7 @@ while the server runs **Wav2Lip** lip-sync instead of SoulX.
 2. **Weights** (default: `<omnirt>/models/wav2lip/wav2lip_gan.pth`), or set `OMNIRT_WAV2LIP_CHECKPOINT`.
 3. **Python 3.9+** venv created **on the machine that runs the server** — do not copy `.venv` trees from other hosts (broken `home` / prefix paths).
 4. Install backend deps from the file that matches your hardware:
-   - **NVIDIA GPU (typical):** `pip install -r model_backends/wav2lip/requirements-wav2lip.txt`
+   - **NVIDIA GPU (typical):** `uv sync --extra server --extra wav2lip-cuda`
    - **Ascend NPU:** configure Huawei wheel indices, then `pip install -r model_backends/wav2lip/requirements-wav2lip-ascend.txt` (align torch/torch-npu with [`requirements-ascend.txt`](../flashtalk/requirements-ascend.txt)).
 
 Do **not** follow Rudrabha’s pinned `torch==1.1.0` `requirements.txt`. This repo patches **`models/repos/Wav2Lip/audio.py`** for **librosa≥0.10**. If imports still fail, install additional packages from the upstream Wav2Lip `requirements.txt` (face-alignment, etc.) into the same env.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import os
 from pathlib import Path
 
 import cv2
@@ -167,6 +168,26 @@ def test_runtime_uses_explicit_face_detection_device(monkeypatch) -> None:
 
     assert runtime.device == "cuda"
     assert runtime.face_detection_device == "cpu"
+
+
+def test_runtime_defaults_cpu_thread_limits(monkeypatch) -> None:
+    for key in (
+        "OMNIRT_WAV2LIP_CPU_THREADS",
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "OPENCV_FOR_THREADS_NUM",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    Wav2LipRealtimeRuntime._configure_cpu_thread_limits()
+
+    assert os.environ["OMP_NUM_THREADS"] == "4"
+    assert os.environ["MKL_NUM_THREADS"] == "4"
+    assert os.environ["OPENBLAS_NUM_THREADS"] == "4"
+    assert os.environ["NUMEXPR_NUM_THREADS"] == "4"
+    assert os.environ["OPENCV_FOR_THREADS_NUM"] == "4"
 
 
 def test_wav2lip_auto_device_uses_configured_npu_index(monkeypatch) -> None:

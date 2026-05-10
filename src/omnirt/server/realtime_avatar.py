@@ -188,10 +188,14 @@ def _scale_video_to_max_long_edge(video: "AvatarVideoSpec", max_long_edge: int) 
     if long_edge <= max_long_edge:
         return video
     scale = max_long_edge / float(long_edge)
+    width = max(2, int(round(video.width * scale)))
+    height = max(2, int(round(video.height * scale)))
+    width -= width % 2
+    height -= height % 2
     return AvatarVideoSpec(
         fps=video.fps,
-        width=max(1, int(round(video.width * scale))),
-        height=max(1, int(round(video.height * scale))),
+        width=width,
+        height=height,
         frame_count=video.frame_count,
         motion_frames_num=video.motion_frames_num,
         slice_len=video.slice_len,
