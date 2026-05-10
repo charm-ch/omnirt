@@ -22,6 +22,7 @@ from omnirt.models.wav2lip.postprocess import (
     BlendConfig,
     MouthGeometry,
     blend_mouth_patch_basic,
+    blend_mouth_patch_easy,
     blend_mouth_patch,
     metadata_face_box_to_crop,
     metadata_radius_to_input_crop,
@@ -82,6 +83,12 @@ class Wav2LipRealtimeRuntime:
         self.batch_size = max(1, int(os.environ.get("OMNIRT_WAV2LIP_BATCH_SIZE", "8")))
         self.jpeg_quality = int(np.clip(self._parse_int(os.environ.get("OMNIRT_WAV2LIP_JPEG_QUALITY"), 85), 1, 100))
         self.pads = self._parse_pads(os.environ.get("OMNIRT_WAV2LIP_PADS", "0,10,0,0"))
+        self.easy_mask_dilation = self._parse_float(os.environ.get("OMNIRT_WAV2LIP_EASY_MASK_DILATION"), 2.5)
+        self.easy_mask_feathering = self._parse_float(os.environ.get("OMNIRT_WAV2LIP_EASY_MASK_FEATHERING"), 2.0)
+        self.easy_debug_mask = self._parse_bool(os.environ.get("OMNIRT_WAV2LIP_EASY_DEBUG_MASK"), default=False)
+        self.gfpgan_checkpoint = Path(
+            os.environ.get("OMNIRT_WAV2LIP_GFPGAN_CHECKPOINT", "checkpoints/GFPGANv1.4.pth")
+        ).expanduser().resolve()
         self.blend_config = BlendConfig(
             lower_lip_dynamic_expand=self._parse_float(
                 os.environ.get("OMNIRT_WAV2LIP_LOWER_LIP_DYNAMIC_EXPAND"),
@@ -98,6 +105,7 @@ class Wav2LipRealtimeRuntime:
             jaw_mask_feather=self._parse_float(os.environ.get("OMNIRT_WAV2LIP_JAW_MASK_FEATHER"), 1.25),
         )
         self._torch_bundle: dict[str, Any] | None = None
+        self._gfpgan_restorer: Any | None = None
         self._face_detector: FaceAlignment | None = None
         self._sessions: dict[str, _SessionState] = {}
         self._frame_sequence_cache: dict[str, list[_PreparedFrame]] = {}
@@ -149,7 +157,7 @@ class Wav2LipRealtimeRuntime:
                             prepared_for_chunk[start + local_offset],
                             patch,
                             input_size,
-                            session.enable_enhanced_postprocessing,
+                            session.wav2lip_postprocess_mode,
                         )
                     )
         state.emitted_frames += len(frames)
@@ -193,11 +201,11 @@ class Wav2LipRealtimeRuntime:
         state = _SessionState(prepared_frames=prepared_frames)
         self._sessions[session.session_id] = state
         log.info(
-            "wav2lip session ready: id=%s reference_mode=%s frames=%d enhanced=%s",
+            "wav2lip session ready: id=%s reference_mode=%s frames=%d postprocess=%s",
             session.session_id,
             session.reference_mode,
             len(prepared_frames),
-            session.enable_enhanced_postprocessing,
+            session.wav2lip_postprocess_mode,
         )
         return state
 
@@ -314,10 +322,14 @@ class Wav2LipRealtimeRuntime:
                 str(session.video.width),
                 str(session.video.height),
                 str(session.video.fps),
-                str(bool(session.enable_enhanced_postprocessing)),
+                session.wav2lip_postprocess_mode,
                 str(bool(session.preprocessed)),
                 str(self.checkpoint),
                 str(self.pads),
+                str(self.easy_mask_dilation),
+                str(self.easy_mask_feathering),
+                str(bool(self.easy_debug_mask)),
+                str(self.gfpgan_checkpoint),
                 metadata_stat,
                 mouth_metadata_sig,
                 "|".join(frame_sig),
@@ -357,7 +369,10 @@ class Wav2LipRealtimeRuntime:
             height=int(session.video.height),
         )
         input_size = int(self._model_bundle()["input_size"])
-        use_enhanced = bool(session.enable_enhanced_postprocessing)
+        postprocess_mode = session.wav2lip_postprocess_mode
+        use_opentalking = postprocess_mode == "opentalking_improved"
+        use_easy = postprocess_mode in {"easy_improved", "easy_enhanced"}
+        needs_geometry = use_opentalking or use_easy
         metadata = mouth_metadata if mouth_metadata is not None else session.mouth_metadata
         preprocessed_crop = self._preprocessed_metadata_crop(metadata, frame.shape[:2]) if session.preprocessed else None
         if preprocessed_crop is not None:
@@ -366,11 +381,11 @@ class Wav2LipRealtimeRuntime:
         else:
             detector_crop = self._detect_face_box(frame)
             crop_source = "detector"
-        metadata_crop = metadata_face_box_to_crop(metadata, frame.shape[:2]) if use_enhanced else None
+        metadata_crop = metadata_face_box_to_crop(metadata, frame.shape[:2]) if needs_geometry else None
         y1, y2, x1, x2 = select_wav2lip_model_crop(
             detector_crop=detector_crop,
             metadata_crop=metadata_crop,
-            enable_enhanced_postprocessing=use_enhanced,
+            use_opentalking_improved=use_opentalking,
         )
         face = cv2.resize(frame[y1:y2, x1:x2].copy(), (input_size, input_size))
         masked = face.copy()
@@ -383,18 +398,18 @@ class Wav2LipRealtimeRuntime:
                 (input_size, input_size),
                 frame.shape[:2],
             )
-            if use_enhanced
+            if needs_geometry
             else None
         )
         geometry_source = "metadata"
-        if geometry is None and use_enhanced:
+        if geometry is None and needs_geometry:
             geometry = self._fallback_mouth_geometry(face)
             geometry_source = "fallback"
         log.info(
-            "wav2lip reference frame prepared: id=%s frame=%d enhanced=%s geometry=%s crop_source=%s crop=%s input_size=%s",
+            "wav2lip reference frame prepared: id=%s frame=%d postprocess=%s geometry=%s crop_source=%s crop=%s input_size=%s",
             session.session_id,
             frame_index,
-            session.enable_enhanced_postprocessing,
+            session.wav2lip_postprocess_mode,
             geometry_source if geometry is not None else "none",
             "metadata" if (y1, y2, x1, x2) == metadata_crop else crop_source,
             (y1, y2, x1, x2),
@@ -521,19 +536,55 @@ class Wav2LipRealtimeRuntime:
         state: _PreparedFrame,
         patch: np.ndarray,
         input_size: int,
-        enhanced: bool,
+        postprocess_mode: str,
     ) -> bytes:
         y1, y2, x1, x2 = state.coords
         frame = state.base_frame.copy()
         resized = cv2.resize(np.clip(patch, 0.0, 255.0).astype(np.uint8), (x2 - x1, y2 - y1))
         original = frame[y1:y2, x1:x2].copy()
-        if enhanced and state.geometry is not None:
+        if postprocess_mode in {"easy_improved", "easy_enhanced"} and state.geometry is not None:
+            patch_geometry = self._scale_geometry(state.geometry, original.shape[:2], (input_size, input_size))
+            if postprocess_mode == "easy_enhanced":
+                resized = self._enhance_patch_gfpgan(resized)
+            blended = blend_mouth_patch_easy(
+                resized,
+                original,
+                geometry=patch_geometry,
+                mask_dilation=self.easy_mask_dilation,
+                mask_feathering=self.easy_mask_feathering,
+                debug_mask=self.easy_debug_mask,
+            )
+        elif postprocess_mode == "opentalking_improved" and state.geometry is not None:
             patch_geometry = self._scale_geometry(state.geometry, original.shape[:2], (input_size, input_size))
             blended = blend_mouth_patch(resized, original, geometry=patch_geometry, config=self.blend_config)
         else:
             blended = blend_mouth_patch_basic(resized, original)
         frame[y1:y2, x1:x2] = blended
         return self._encode_jpeg_bgr(frame)
+
+    def _enhance_patch_gfpgan(self, patch_bgr: np.ndarray) -> np.ndarray:
+        if self._gfpgan_restorer is None:
+            if not self.gfpgan_checkpoint.is_file():
+                raise Wav2LipRuntimeError(f"GFPGAN checkpoint not found: {self.gfpgan_checkpoint}")
+            try:
+                from gfpgan import GFPGANer
+            except Exception as exc:
+                raise Wav2LipRuntimeError("GFPGAN package is not available in this Python environment.") from exc
+            self._gfpgan_restorer = GFPGANer(
+                model_path=str(self.gfpgan_checkpoint),
+                upscale=1,
+                arch="clean",
+                channel_multiplier=2,
+                bg_upsampler=None,
+            )
+            log.info("GFPGAN restorer loaded: checkpoint=%s", self.gfpgan_checkpoint)
+        _, _, output = self._gfpgan_restorer.enhance(
+            patch_bgr,
+            has_aligned=False,
+            only_center_face=False,
+            paste_back=True,
+        )
+        return output
 
     @staticmethod
     def _geometry_from_metadata(
@@ -706,6 +757,13 @@ class Wav2LipRealtimeRuntime:
             return float(raw)
         except ValueError:
             return default
+
+    @staticmethod
+    def _parse_postprocess_mode(raw: str | None) -> str:
+        mode = (raw or "easy_improved").strip().lower().replace("-", "_")
+        if mode in {"basic", "opentalking_improved", "easy_improved", "easy_enhanced"}:
+            return mode
+        return "easy_improved"
 
     @staticmethod
     def _parse_int(raw: str | None, default: int) -> int:

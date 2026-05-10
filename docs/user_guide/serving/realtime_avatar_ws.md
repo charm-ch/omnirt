@@ -30,7 +30,7 @@ is the model-agnostic control-plane protocol.
   "config": {
     "preset": "realtime",
     "seed": 9999,
-    "enable_enhanced_postprocessing": false,
+    "wav2lip_postprocess_mode": false,
     "mouth_metadata": {
       "source_image_hash": "<sha256>",
       "animation": {
@@ -67,9 +67,9 @@ Response:
 }
 ```
 
-## Wav2Lip enhanced postprocessing
+## Wav2Lip postprocess mode
 
-Wav2Lip sessions accept `enable_enhanced_postprocessing` and optional
+Wav2Lip sessions accept `wav2lip_postprocess_mode` and optional
 `mouth_metadata` in session config. When disabled, OmniRT keeps native Wav2Lip
 output behavior. When enabled, the Wav2Lip runtime can use the supplied mouth
 polygon to blend the generated mouth region back into the reference frame with
@@ -78,7 +78,7 @@ lower-lip coverage, feathering, and color matching.
 The service default is off. It can be enabled process-wide with:
 
 ```bash
-OMNIRT_WAV2LIP_ENABLE_ENHANCED_POSTPROCESSING=1 omnirt serve ...
+OMNIRT_WAV2LIP_POSTPROCESS_MODE=1 omnirt serve ...
 ```
 
 The enhanced path exposes separate knobs for lower-lip coverage and jaw motion

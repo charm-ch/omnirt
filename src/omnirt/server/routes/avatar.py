@@ -80,7 +80,7 @@ def _wav2lip_config_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "reference_mode",
         "ref_frame_dir",
         "ref_frame_metadata_path",
-        "enable_enhanced_postprocessing",
+        "wav2lip_postprocess_mode",
         "mouth_metadata",
         "preprocessed",
     ):
@@ -171,7 +171,7 @@ async def list_audio2video_models(request: Request) -> dict[str, object]:
     flashtalk_connected = (
         await _is_ws_url_reachable(flashtalk_proxy)
         if flashtalk_proxy
-        else True
+        else False
     )
     if wav2lip_proxy:
         wav2lip_connected = await _is_ws_url_reachable(wav2lip_proxy)
@@ -256,9 +256,7 @@ async def _flashtalk_compatible_loop(websocket: WebSocket, *, model: str) -> Non
                                     config[key] = payload.get(key)
                             config.update(
                                 {
-                                    "enable_enhanced_postprocessing": payload.get(
-                                        "enable_enhanced_postprocessing"
-                                    ),
+                                    "wav2lip_postprocess_mode": payload.get("wav2lip_postprocess_mode"),
                                     "mouth_metadata": payload.get("mouth_metadata") or {},
                                 }
                             )
@@ -277,7 +275,7 @@ async def _flashtalk_compatible_loop(websocket: WebSocket, *, model: str) -> Non
                         {
                             "type": "init_ok",
                             "model": session.model,
-                            "enable_enhanced_postprocessing": session.enable_enhanced_postprocessing,
+                            "wav2lip_postprocess_mode": session.wav2lip_postprocess_mode,
                             "frame_num": session.video.frame_count,
                             "motion_frames_num": session.video.motion_frames_num,
                             "slice_len": session.video.slice_len,

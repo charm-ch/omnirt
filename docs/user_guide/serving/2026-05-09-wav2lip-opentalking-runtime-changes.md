@@ -21,12 +21,12 @@ Wav2Lip 实时推理能力所做的改动。迁移后的职责边界是：OmniRT
 
 ## 推理流程
 
-- WebSocket init 时接收 reference image、视频参数、`enable_enhanced_postprocessing`
+- WebSocket init 时接收 reference image、视频参数、`wav2lip_postprocess_mode`
   和 `mouth_metadata`。
 - 音频 chunk 进入 runtime 后会转换成 Wav2Lip mel chunks，模型输出嘴部 patch。
 - runtime 将 patch 融合回原始 avatar frame，并以 JPEG sequence 返回给
   OpenTalking/WebRTC。
-- 为保证 basic/enhanced 两条路径可对比，模型输入 crop 仍以 face detector crop 为准；
+- 为保证 basic/opentalking_improved/easy_improved/easy_enhanced 两条路径可对比，模型输入 crop 仍以 face detector crop 为准；
   mouth metadata 只用于融合区域、mask 几何和增强后处理。
 
 ## 增强后处理
@@ -37,8 +37,8 @@ Wav2Lip 实时推理能力所做的改动。迁移后的职责边界是：OmniRT
   用于减轻矩形边界、肤色色差和下唇被遮挡的问题。
 - 增加可选 jaw motion blend，让下巴区域以低 alpha 跟随嘴部运动，减少“只有嘴动、
   下巴完全静止”的违和感。
-- 增强后处理由开关控制，便于线上对比 basic/enhanced：
-  `OMNIRT_WAV2LIP_ENABLE_ENHANCED_POSTPROCESSING`。
+- 增强后处理由开关控制，便于线上对比 basic/opentalking_improved/easy_improved/easy_enhanced：
+  `OMNIRT_WAV2LIP_POSTPROCESS_MODE`。
 - 下巴和下唇相关参数独立配置，便于控制变量：
   `OMNIRT_WAV2LIP_LOWER_LIP_DYNAMIC_EXPAND`、
   `OMNIRT_WAV2LIP_ENABLE_JAW_MOTION_BLEND`、

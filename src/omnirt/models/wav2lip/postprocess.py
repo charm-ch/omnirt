@@ -76,11 +76,11 @@ def select_wav2lip_model_crop(
     *,
     detector_crop: tuple[int, int, int, int],
     metadata_crop: tuple[int, int, int, int] | None,
-    enable_enhanced_postprocessing: bool,
+    use_opentalking_improved: bool,
 ) -> tuple[int, int, int, int]:
     """Select the crop used as Wav2Lip model input.
 
-    Enhanced postprocessing can use metadata for the final mouth mask, but the
+    OpenTalking improved postprocessing can use metadata for the final mouth mask, but the
     model input should remain on the legacy detector crop so the enhanced path
     is comparable to basic blending.
     """
@@ -248,6 +248,68 @@ def build_mouth_blend_mask(
     return np.expand_dims(mask, axis=2)
 
 
+def _ellipse_points(geometry: MouthGeometry, *, samples: int = 20) -> np.ndarray:
+    angles = np.linspace(0.0, 2.0 * np.pi, num=max(8, samples), endpoint=False)
+    cx, cy = geometry.center
+    points = np.stack(
+        (
+            cx + np.cos(angles) * max(1, geometry.rx),
+            cy + np.sin(angles) * max(1, geometry.ry),
+        ),
+        axis=1,
+    )
+    return np.rint(points).astype(np.int32)
+
+
+def _easy_mouth_points(shape: tuple[int, int], geometry: MouthGeometry) -> np.ndarray:
+    height, width = shape
+    if len(geometry.outer_lip) >= 3:
+        points = np.asarray(geometry.outer_lip, dtype=np.int32)
+    else:
+        points = _ellipse_points(geometry)
+    points[:, 0] = np.clip(points[:, 0], 0, max(0, width - 1))
+    points[:, 1] = np.clip(points[:, 1], 0, max(0, height - 1))
+    return points
+
+
+def build_easy_mouth_blend_mask(
+    shape: tuple[int, int],
+    geometry: MouthGeometry,
+    *,
+    mask_dilation: float = 2.5,
+    mask_feathering: float = 2.0,
+) -> np.ndarray:
+    """Build an Easy-Wav2Lip-style mouth mask.
+
+    Easy-Wav2Lip detects mouth points, fills their convex polygon, dilates by a
+    multiple of the mouth bounding box, applies a distance transform threshold,
+    then feathers the binary mask. This variant uses precomputed mouth geometry
+    instead of dlib landmarks so deployment does not gain a new dependency.
+    """
+
+    points = _easy_mouth_points(shape, geometry)
+    _, _, w, h = cv2.boundingRect(points)
+    mouth_size = max(1, w, h)
+    kernel_size = max(1, int(mouth_size * max(0.0, mask_dilation)))
+    kernel = np.ones((kernel_size, kernel_size), np.uint8)
+
+    mask = np.zeros(shape, dtype=np.uint8)
+    cv2.fillConvexPoly(mask, cv2.convexHull(points.reshape((-1, 1, 2))), 255)
+    dilated_mask = cv2.dilate(mask, kernel)
+    dist_transform = cv2.distanceTransform(dilated_mask, cv2.DIST_L2, 5)
+    if float(dist_transform.max()) > 0.0:
+        cv2.normalize(dist_transform, dist_transform, 0, 255, cv2.NORM_MINMAX)
+    _, masked_diff = cv2.threshold(dist_transform, 50, 255, cv2.THRESH_BINARY)
+    masked_diff = masked_diff.astype(np.uint8)
+
+    if mask_feathering != 0:
+        blur = max(1, int(mouth_size * max(0.0, mask_feathering)))
+        if blur % 2 == 0:
+            blur += 1
+        masked_diff = cv2.GaussianBlur(masked_diff, (blur, blur), 0)
+    return np.expand_dims(masked_diff.astype(np.float32) / 255.0, axis=2)
+
+
 def build_jaw_motion_mask(
     shape: tuple[int, int],
     geometry: MouthGeometry,
@@ -380,6 +442,29 @@ def blend_mouth_patch(
         out = matched_f * jaw_mask + out * (1.0 - jaw_mask)
     out = matched_f * blend_mask + out * (1.0 - blend_mask)
     return np.clip(out, 0.0, 255.0).astype(np.uint8)
+
+
+def blend_mouth_patch_easy(
+    pred: np.ndarray,
+    original: np.ndarray,
+    *,
+    geometry: MouthGeometry,
+    mask_dilation: float = 2.5,
+    mask_feathering: float = 2.0,
+    debug_mask: bool = False,
+) -> np.ndarray:
+    mask = build_easy_mouth_blend_mask(
+        pred.shape[:2],
+        geometry,
+        mask_dilation=mask_dilation,
+        mask_feathering=mask_feathering,
+    )
+    original_base = original
+    if debug_mask:
+        gray = cv2.cvtColor(original, cv2.COLOR_BGR2GRAY)
+        original_base = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+    blended = pred.astype(np.float32) * mask + original_base.astype(np.float32) * (1.0 - mask)
+    return np.clip(blended, 0.0, 255.0).astype(np.uint8)
 
 
 def blend_mouth_patch_basic(pred: np.ndarray, original: np.ndarray) -> np.ndarray:

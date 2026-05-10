@@ -69,13 +69,84 @@ def test_frame_sequence_uses_per_frame_mouth_metadata(tmp_path: Path, monkeypatc
         ref_frame_metadata_path=str(metadata_path),
         audio=AvatarAudioSpec(),
         video=AvatarVideoSpec(width=24, height=24),
-        enable_enhanced_postprocessing=True,
+        wav2lip_postprocess_mode="opentalking_improved",
     )
 
     state = runtime._session_state(session)
 
     assert len(state.prepared_frames) == 2
     assert [item["animation"]["mouth_center"] for item in seen] == [[0.25, 0.5], [0.75, 0.5]]
+
+
+def test_easy_improved_postprocess_mode_prepares_geometry_without_enhanced_flag(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("OMNIRT_WAV2LIP_POSTPROCESS_MODE", "easy_improved")
+    frames = tmp_path / "frames"
+    frames.mkdir()
+    _write_frame(frames / "frame_00000.jpg", 10)
+    metadata_path = tmp_path / "mouth_metadata.json"
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "frames": {
+                    "frame_00000.jpg": {
+                        "animation": {
+                            "mouth_center": [0.5, 0.5],
+                            "mouth_rx": 0.1,
+                            "mouth_ry": 0.05,
+                            "outer_lip": [
+                                [0.4, 0.5],
+                                [0.45, 0.46],
+                                [0.5, 0.45],
+                                [0.55, 0.46],
+                                [0.6, 0.5],
+                                [0.55, 0.54],
+                                [0.5, 0.55],
+                                [0.45, 0.54],
+                            ],
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    runtime = Wav2LipRealtimeRuntime(device="cpu")
+    monkeypatch.setattr(runtime, "_model_bundle", lambda: {"input_size": 8})
+    monkeypatch.setattr(runtime, "_detect_face_box", lambda frame: (0, frame.shape[0], 0, frame.shape[1]))
+
+    session = RealtimeAvatarSession(
+        session_id="s",
+        trace_id="t",
+        model="wav2lip",
+        backend="test",
+        prompt="",
+        image_bytes=b"ref",
+        reference_mode="frames",
+        ref_frame_dir=str(frames),
+        ref_frame_metadata_path=str(metadata_path),
+        audio=AvatarAudioSpec(),
+        video=AvatarVideoSpec(width=24, height=24),
+        wav2lip_postprocess_mode="easy_improved",
+    )
+
+    state = runtime._session_state(session)
+
+    assert state.prepared_frames[0].geometry is not None
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (None, "easy_improved"),
+        ("basic", "basic"),
+        ("opentalking_improved", "opentalking_improved"),
+        ("easy_improved", "easy_improved"),
+        ("easy_enhanced", "easy_enhanced"),
+        ("unsupported", "easy_improved"),
+    ],
+)
+def test_wav2lip_postprocess_mode_accepts_only_public_values(raw: str | None, expected: str) -> None:
+    assert Wav2LipRealtimeRuntime._parse_postprocess_mode(raw) == expected
 
 
 def test_runtime_defaults_face_detection_to_cpu_for_npu(monkeypatch) -> None:
@@ -152,7 +223,7 @@ def test_frame_sequence_preparation_is_reused_across_sessions(tmp_path: Path, mo
             ref_frame_dir=str(frames),
             audio=AvatarAudioSpec(),
             video=AvatarVideoSpec(width=24, height=24),
-            enable_enhanced_postprocessing=True,
+            wav2lip_postprocess_mode="opentalking_improved",
         )
 
     first = runtime._session_state(make_session("s1"))
@@ -202,7 +273,7 @@ def test_frame_sequence_cache_ignores_session_mouth_metadata_when_frame_metadata
             mouth_metadata=mouth_metadata,
             audio=AvatarAudioSpec(),
             video=AvatarVideoSpec(width=24, height=24),
-            enable_enhanced_postprocessing=True,
+            wav2lip_postprocess_mode="opentalking_improved",
         )
 
     preloaded = runtime._session_state(make_session("preload", None))
@@ -255,7 +326,7 @@ def test_preprocessed_frame_metadata_uses_model_crop_without_detector(tmp_path: 
         ref_frame_metadata_path=str(metadata_path),
         audio=AvatarAudioSpec(),
         video=AvatarVideoSpec(width=24, height=24),
-        enable_enhanced_postprocessing=True,
+        wav2lip_postprocess_mode="opentalking_improved",
         preprocessed=True,
     )
 
@@ -307,7 +378,7 @@ def test_preprocessed_frame_metadata_without_trusted_model_crop_uses_detector(tm
         ref_frame_metadata_path=str(metadata_path),
         audio=AvatarAudioSpec(),
         video=AvatarVideoSpec(width=24, height=24),
-        enable_enhanced_postprocessing=True,
+        wav2lip_postprocess_mode="opentalking_improved",
         preprocessed=True,
     )
 
@@ -357,7 +428,7 @@ def test_preprocessed_frame_metadata_with_face_box_skips_detector(tmp_path: Path
         ref_frame_metadata_path=str(metadata_path),
         audio=AvatarAudioSpec(),
         video=AvatarVideoSpec(width=24, height=24),
-        enable_enhanced_postprocessing=True,
+        wav2lip_postprocess_mode="opentalking_improved",
         preprocessed=True,
     )
 
@@ -401,7 +472,7 @@ def test_preprocessed_frame_metadata_rejects_hash_mismatch(tmp_path: Path, monke
         ref_frame_metadata_path=str(metadata_path),
         audio=AvatarAudioSpec(),
         video=AvatarVideoSpec(width=24, height=24),
-        enable_enhanced_postprocessing=True,
+        wav2lip_postprocess_mode="opentalking_improved",
         preprocessed=True,
     )
 

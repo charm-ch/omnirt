@@ -105,9 +105,10 @@ def test_audio2video_models_reports_wav2lip_unavailable_by_default() -> None:
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["models"] == ["flashtalk"]
+    assert payload["models"] == []
     statuses = {item["id"]: item for item in payload["statuses"]}
-    assert statuses["flashtalk"]["connected"] is True
+    assert statuses["flashtalk"]["connected"] is False
+    assert statuses["flashtalk"]["reason"] == "fallback_runtime"
     assert statuses["wav2lip"]["connected"] is False
 
 
@@ -117,7 +118,7 @@ def test_avatar_models_alias_reports_wav2lip_unavailable_by_default() -> None:
     response = client.get("/v1/avatar/models")
 
     assert response.status_code == 200
-    assert response.json()["models"] == ["flashtalk"]
+    assert response.json()["models"] == []
 
 
 def test_audio2video_models_reports_proxy_targets(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -250,7 +251,7 @@ def test_native_realtime_avatar_ws_flow() -> None:
         assert ws.receive_json()["type"] == "session.closed"
 
 
-def test_wav2lip_init_accepts_enhanced_postprocessing_and_metadata() -> None:
+def test_wav2lip_init_accepts_postprocess_mode_and_metadata() -> None:
     client = TestClient(create_app(default_backend="cpu-stub"))
     metadata = {
         "source_image_hash": "abc123",
@@ -268,7 +269,7 @@ def test_wav2lip_init_accepts_enhanced_postprocessing_and_metadata() -> None:
             {
                 "type": "init",
                 "ref_image": _image_b64(),
-                "enable_enhanced_postprocessing": True,
+                "wav2lip_postprocess_mode": "opentalking_improved",
                 "mouth_metadata": metadata,
             }
         )
@@ -276,7 +277,7 @@ def test_wav2lip_init_accepts_enhanced_postprocessing_and_metadata() -> None:
 
     assert init["type"] == "init_ok"
     assert init["model"] == "wav2lip"
-    assert init["enable_enhanced_postprocessing"] is True
+    assert init["wav2lip_postprocess_mode"] == "opentalking_improved"
 
 
 def test_wav2lip_init_accepts_frame_reference_dir(tmp_path: Path) -> None:
@@ -396,7 +397,7 @@ def test_wav2lip_preload_endpoint_uses_runtime_cache(tmp_path: Path) -> None:
         "height": 24,
         "fps": 30,
         "preprocessed": True,
-        "enable_enhanced_postprocessing": True,
+        "wav2lip_postprocess_mode": "opentalking_improved",
     }
 
     first = client.post("/v1/audio2video/wav2lip/preload", json=payload)
