@@ -9,6 +9,7 @@ Last updated: `2026-04-28`
 - `text2image`
 - `image2image`
 - `text2audio`
+- `audio2text`
 - `text2video`
 - `image2video`
 - `audio2video`
@@ -19,7 +20,7 @@ The full list is generated from the live registry: [Supported Models](supported_
 
 | Tier | Maintenance promise | Current models |
 |---|---|---|
-| Core | Digital-human main path; requires registry, unit tests, real-hardware smoke, benchmark, and deployment docs | `soulx-flashtalk-14b`, `soulx-liveact-14b`, `soulx-flashhead-1.3b`, `cosyvoice3-triton-trtllm` |
+| Core | Digital-human main path; requires registry, unit tests, real-hardware smoke, benchmark, and deployment docs | `soulx-flashtalk-14b`, `soulx-liveact-14b`, `soulx-flashhead-1.3b`, `cosyvoice3-triton-trtllm`, `sensevoice-small` |
 | Adjacent | Avatar assets, backgrounds, idle video material, and post-processing; smoke tests are added by digital-human scenario | `sdxl-base-1.0`, `svd-xt`, `flux2.dev`, `qwen-image`, `wan2.2-*` |
 | Experimental | Integrated, but no longer a main investment line; keeps registry and basic tests, without a dual-backend smoke promise | `kolors`, `pixart-sigma`, `bria-3.2`, `lumina-t2x`, `mochi`, `skyreels-v2`, and similar general models |
 
@@ -40,13 +41,16 @@ The following models have completed real hardware smoke tests using local model 
   Notes: `persistent_worker` on 8-card `Ascend 910B2` has completed real-hardware validation.
 - `soulx-liveact-14b`
   Ascend: `validated`
-  Notes: the external SoulX-LiveAct `generate.py` path has been aligned to the 4-card `Ascend 910B` official case; OmniRT exposes it through a script-backed wrapper. By default it prepares text context on one NPU before the 4-card inference job. Use `--text-cache-visible-devices <single-card> --visible-devices <four-cards> --sample-steps 1` for quick smoke.
+  Notes: the external SoulX-LiveAct `generate.py` path has been aligned to the 4-card `Ascend 910B` official case; OmniRT now exposes it through the `persistent_worker` execution surface while retaining the script-backed generation path inside the worker. By default it prepares text context on one NPU before the 4-card inference job. Use `--text-cache-visible-devices <single-card> --visible-devices <four-cards> --sample-steps 1` for quick smoke.
 - `soulx-flashhead-1.3b`
   Ascend: `validated`
-  Notes: the external SoulX-FlashHead checkout has completed 910B NPU adaptation and quality-profile validation; OmniRT currently exposes it through a script-backed cold-start wrapper with `2-step + 2D VAE split + latent_carry off` defaults. Real-hardware OmniRT cold-start benchmark: 2 NPU `82.96s`, 4 NPU `84.08s`, both producing `512x512 / 10s / 250 frames`.
+  Notes: the external SoulX-FlashHead checkout has completed 910B NPU adaptation and quality-profile validation; OmniRT now exposes it through the `persistent_worker` execution surface while retaining the script-backed generation path inside the worker, with `2-step + 2D VAE split + latent_carry off` defaults. Historical real-hardware OmniRT cold-start benchmark: 2 NPU `82.96s`, 4 NPU `84.08s`, both producing `512x512 / 10s / 250 frames`.
 - `cosyvoice3-triton-trtllm`
   CUDA: `validated`
   Notes: the official `runtime/triton_trtllm` service has completed real benchmark runs. The stable profile is `token2wav=2`, `vocoder=2`, and `kv_cache_free_gpu_memory_fraction=0.2`. The OmniRT wrapper generated a real `2.92s / 24kHz` wav with `denoise_loop_ms=1969.611`; the official 26-sample streaming benchmark measured `RTF=0.1303` and `699.13ms` average first-chunk latency. Client-side `seed` is forwarded, but the server-side BLS still needs to consume that parameter for fully deterministic sampling.
+- `sensevoice-small`
+  Offline ASR: `contract integrated`
+  Notes: the `audio2text` task surface, registry entry, CLI/Python API, and unit tests are integrated. Real smoke depends on FunASR and a local audio fixture.
 
 ## Adjacent: Smoke by Digital-Human Scenario
 
@@ -90,7 +94,7 @@ The following models keep registry entries, generated docs, and basic unit cover
 
 ## Digital-Human Targets Not Completed Yet
 
-- ASR / speech understanding: Whisper, Paraformer, SenseVoice, and similar candidates
+- ASR / speech understanding: `sensevoice-small` is the first integrated entrypoint; Whisper and Paraformer remain follow-up candidates
 - TTS and voice reuse: CosyVoice profile caching, stable seed behavior, streaming first-chunk metrics
 - Realtime avatars: resident workers, restart behavior, and hot-path benchmarks for FlashTalk / FlashHead / LiveAct
 - Post-processing: GFPGAN / CodeFormer / Real-ESRGAN / RIFE / matting for digital-human enhancement

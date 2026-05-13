@@ -1,6 +1,6 @@
 # FlashHead Benchmark
 
-这份文档记录 `soulx-flashhead-1.3b` 在 OmniRT `subprocess` 包装路径下的首轮真机 benchmark。它和外部 SoulX-FlashHead 适配文档的 resident 数据口径不同：这里测的是 OmniRT 调用 `generate_video.py` 的冷启动端到端链路。
+这份文档记录 `soulx-flashhead-1.3b` 在 OmniRT script-backed 生成路径下的首轮真机 benchmark。当前 registry 已把 FlashHead 暴露为 `persistent_worker` 执行表面，但该 worker 内部仍复用这里记录的 `generate_video.py` 生成链路；本文数据口径仍是历史冷启动端到端结果。
 
 ## 测试环境
 

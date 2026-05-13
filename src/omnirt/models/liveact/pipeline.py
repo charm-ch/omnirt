@@ -18,6 +18,7 @@ from omnirt.core.types import Artifact, GenerateRequest
 from omnirt.launcher import resolve_launcher
 from omnirt.models.flashtalk.pipeline import probe_video_file
 from omnirt.models.liveact.components import DEFAULT_LIVEACT_PROMPT, liveact_setting
+from omnirt.workers import GrpcResidentWorkerProxy, PipelineResidentWorker
 
 
 @dataclass(frozen=True)
@@ -90,7 +91,7 @@ class LiveActLaunchConfig:
     id="soulx-liveact-14b",
     task="audio2video",
     default_backend="ascend",
-    execution_mode="legacy_call",
+    execution_mode="persistent_worker",
     resource_hint={
         "min_vram_gb": 64,
         "vram_scope": "aggregate",
@@ -105,6 +106,7 @@ class LiveActLaunchConfig:
             "repo_path",
             "ckpt_dir",
             "wav2vec_dir",
+            "resident_target",
             "seed",
             "output_dir",
             "python_executable",
@@ -177,6 +179,19 @@ class LiveActLaunchConfig:
     ),
 )
 class LiveActPipeline(BasePipeline):
+    @classmethod
+    def create_persistent_worker(cls, *, runtime, model_spec, config, adapters):
+        resident_target = cls._normalize_optional_string(config.get("resident_target"))
+        if resident_target:
+            return GrpcResidentWorkerProxy(resident_target)
+        return PipelineResidentWorker(
+            pipeline_cls=cls,
+            runtime=runtime,
+            model_spec=model_spec,
+            config=config,
+            adapters=adapters,
+        )
+
     def ensure_resource_budget(self, req: GenerateRequest) -> None:
         if self._normalize_optional_string(req.config.get("visible_devices")):
             return

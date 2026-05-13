@@ -12,6 +12,7 @@
 - `text2video`
 - `image2video`
 - `audio2video`
+- `audio2text`
 
 ## 模型维护分层
 
@@ -19,7 +20,7 @@
 
 | 层级 | 维护承诺 | 当前模型 |
 |---|---|---|
-| Core | 数字人主链路；必须有 registry、单测、真机 smoke、benchmark、部署文档 | `soulx-flashtalk-14b`, `soulx-liveact-14b`, `soulx-flashhead-1.3b`, `cosyvoice3-triton-trtllm` |
+| Core | 数字人主链路；必须有 registry、单测、真机 smoke、benchmark、部署文档 | `soulx-flashtalk-14b`, `soulx-liveact-14b`, `soulx-flashhead-1.3b`, `cosyvoice3-triton-trtllm`, `sensevoice-small` |
 | Adjacent | 服务于角色资产、背景图、idle 视频素材、后处理；按数字人场景补 smoke | `sdxl-base-1.0`, `svd-xt`, `flux2.dev`, `qwen-image`, `wan2.2-*` |
 | Experimental | 已接入但不再作为主线投入；保留 registry 与基础测试，不承诺双后端 smoke | `kolors`, `pixart-sigma`, `bria-3.2`, `lumina-t2x`, `mochi`, `skyreels-v2` 等 |
 
@@ -40,13 +41,16 @@
   说明: `persistent_worker` 常驻 8 卡 `Ascend 910B2` 链路已跑通；冷启动约 `91s`，实时配置热态 `steady_chunk_core_ms_avg ≈ 891ms`
 - `soulx-liveact-14b`
   Ascend: `已验证`
-  说明: 外部 SoulX-LiveAct `generate.py` 已完成 4 卡 `Ascend 910B` 官方案例对齐；OmniRT 当前接入的是 script-backed wrapper，默认先用单张 NPU 生成 text context cache，再做 4 卡推理；推荐 `--text-cache-visible-devices <1张卡> --visible-devices <4张卡> --sample-steps 1` 做快速 smoke
+  说明: 外部 SoulX-LiveAct `generate.py` 已完成 4 卡 `Ascend 910B` 官方案例对齐；OmniRT 当前通过 `persistent_worker` 执行表面接入，worker 内部保留 script-backed 生成路径，默认先用单张 NPU 生成 text context cache，再做 4 卡推理；推荐 `--text-cache-visible-devices <1张卡> --visible-devices <4张卡> --sample-steps 1` 做快速 smoke
 - `soulx-flashhead-1.3b`
   Ascend: `已验证`
-  说明: 外部 SoulX-FlashHead checkout 已完成 910B NPU 适配和质量档验证；OmniRT 当前接入的是 script-backed 冷启动包装，默认 `2-step + 2D VAE split + latent_carry off`。OmniRT 真机冷启动 benchmark：2 卡 `82.96s`，4 卡 `84.08s`，输出均为 `512x512 / 10s / 250 frames`
+  说明: 外部 SoulX-FlashHead checkout 已完成 910B NPU 适配和质量档验证；OmniRT 当前通过 `persistent_worker` 执行表面接入，worker 内部保留 script-backed 生成路径，默认 `2-step + 2D VAE split + latent_carry off`。历史 OmniRT 真机冷启动 benchmark：2 卡 `82.96s`，4 卡 `84.08s`，输出均为 `512x512 / 10s / 250 frames`
 - `cosyvoice3-triton-trtllm`
   CUDA: `已验证`
   说明: 官方 `runtime/triton_trtllm` 服务已完成真实 benchmark；稳定配置为 `token2wav=2`、`vocoder=2`、`kv_cache_free_gpu_memory_fraction=0.2`。OmniRT wrapper 真实生成 `2.92s / 24kHz` wav，`denoise_loop_ms=1969.611`；官方 26 条 streaming benchmark `RTF=0.1303`、平均首包 `699.13ms`。客户端 `seed` 已透传，但服务端 BLS 仍需消费该参数才能完全固定采样。
+- `sensevoice-small`
+  离线 ASR: `契约已接入`
+  说明: `audio2text` 任务面、registry、CLI/Python API 与单测已接入；真机 smoke 依赖 FunASR 与本地音频样本。
 
 ## Adjacent：按数字人场景补真机 smoke
 
@@ -90,7 +94,7 @@
 
 ## 尚未完成的数字人重点目标
 
-- ASR / 语音理解：Whisper、Paraformer、SenseVoice 等候选
+- ASR / 语音理解：`sensevoice-small` 已作为第一版入口接入；Whisper、Paraformer 作为后续候选
 - TTS 与音色复用：CosyVoice profile 缓存、稳定 seed、流式首包指标
 - 实时数字人：FlashTalk / FlashHead / LiveAct 的 resident worker 化、重启、热态 benchmark
 - 后处理：GFPGAN / CodeFormer / Real-ESRGAN / RIFE / matting 等数字人增强链路

@@ -83,6 +83,14 @@ b"VIDX" + uint32(frame_count) + repeated(uint32(jpeg_len) + jpeg_bytes)
 {"type": "ping"}
 ```
 
-## Status
+## Runtime modes
 
-The v1 endpoint establishes the public protocol and has a fake runtime for integration tests. Model-backed FlashTalk streaming will plug into the same service abstraction without changing the wire contract.
+The v1 endpoint keeps the wire contract stable while the backing runtime can be selected per deployment:
+
+| Mode | Selection | Notes |
+|---|---|---|
+| `fake` | default, or `OMNIRT_REALTIME_AVATAR_RUNTIME=fake` | deterministic JPEG chunks for protocol tests and CPU-stub demos |
+| `proxy` | `OMNIRT_REALTIME_AVATAR_RUNTIME=proxy` plus `OMNIRT_AVATAR_FLASHTALK_WS_URL` | forwards the FlashTalk-compatible route to an existing WebSocket service |
+| `resident` | `OMNIRT_REALTIME_AVATAR_RUNTIME=resident` | renders chunks through OmniRT's resident `soulx-flashtalk-14b` execution path |
+
+`GET /v1/audio2video/models` reports the active reason as `fallback_runtime`, `proxy`, or `resident_runtime` so clients can distinguish protocol-only test mode from a model-backed deployment.

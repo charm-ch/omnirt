@@ -65,6 +65,7 @@ _BUILTIN_MODEL_IDS = {
     "soulx-liveact-14b",
     "soulx-flashhead-1.3b",
     "cosyvoice3-triton-trtllm",
+    "sensevoice-small",
 }
 _BUILTIN_MODEL_VARIANTS = {
     ("sd15", "text2image"),
@@ -88,6 +89,7 @@ _BUILTIN_MODEL_VARIANTS = {
     ("qwen-image-edit-plus", "edit"),
     ("qwen-image-layered", "edit"),
     ("cosyvoice3-triton-trtllm", "text2audio"),
+    ("sensevoice-small", "audio2text"),
 }
 
 
@@ -138,6 +140,7 @@ def ensure_registered() -> None:
     from omnirt.models.liveact import pipeline as _liveact_pipeline  # noqa: F401
     from omnirt.models.flashhead import pipeline as _flashhead_pipeline  # noqa: F401
     from omnirt.models.cosyvoice import pipeline as _cosyvoice_pipeline  # noqa: F401
+    from omnirt.models.sensevoice import pipeline as _sensevoice_pipeline  # noqa: F401
 
     registered_ids = set(list_models())
     if not {"sd15", "sd21"}.issubset(registered_ids):
@@ -245,6 +248,12 @@ def ensure_registered() -> None:
         registered_ids = set(list_models())
         if not {"cosyvoice3-triton-trtllm"}.issubset(registered_ids):
             importlib.reload(_cosyvoice_pipeline)
+            registered_ids = set(list_models())
+    if not {"sensevoice-small"}.issubset(registered_ids):
+        _re_register_module_classes(_sensevoice_pipeline)
+        registered_ids = set(list_models())
+        if not {"sensevoice-small"}.issubset(registered_ids):
+            importlib.reload(_sensevoice_pipeline)
             registered_ids = set(list_models())
 
     _REGISTERED = _BUILTIN_MODEL_IDS.issubset(registered_ids) and all(

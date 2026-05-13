@@ -42,7 +42,7 @@ When `async_run=true`, the server returns a job record instead of the final `Gen
 
 ## Field rules
 
-- `task`: task surface, currently including `text2image`, `image2image`, `inpaint`, `edit`, `text2video`, `image2video`, `audio2video`
+- `task`: task surface, currently including `text2image`, `image2image`, `inpaint`, `edit`, `text2video`, `image2video`, `audio2video`, `text2audio`, `audio2text`
 - `model`: OmniRT registry id, not an upstream framework class name
 - `backend`: `auto`, `cuda`, `ascend`, `cpu-stub`
 - `inputs`: semantic inputs such as `prompt`, `image`, `mask`, `audio`

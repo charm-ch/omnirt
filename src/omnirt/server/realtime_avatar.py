@@ -7,11 +7,15 @@ import io
 import os
 from pathlib import Path
 import struct
+import tempfile
 import time
 import uuid
+import wave
 from typing import Any, Dict, List, Literal, Optional
 
 from PIL import Image
+
+from omnirt.core.types import GenerateRequest
 
 
 MAGIC_AUDIO = b"AUDI"
@@ -205,6 +209,8 @@ def _scale_video_to_max_long_edge(video: "AvatarVideoSpec", max_long_edge: int) 
 class FakeRealtimeAvatarRuntime:
     """Small deterministic runtime used for protocol tests and cpu-stub demos."""
 
+    runtime_kind = "fake"
+
     def render_chunk(self, session: RealtimeAvatarSession, pcm_s16le: bytes) -> bytes:
         # Produce a tiny valid JPEG. Pixel color changes per chunk so tests can
         # detect that a new chunk was rendered without depending on model code.
@@ -219,6 +225,84 @@ class FakeRealtimeAvatarRuntime:
         return encode_jpeg_sequence([buffer.getvalue()])
 
 
+class FlashTalkResidentRealtimeRuntime:
+    """Realtime avatar runtime backed by OmniRT's resident audio2video model path."""
+
+    runtime_kind = "resident"
+
+    def __init__(
+        self,
+        *,
+        engine,
+        model: str = "soulx-flashtalk-14b",
+        backend: str = "ascend",
+        base_config: Optional[dict[str, object]] = None,
+    ) -> None:
+        self.engine = engine
+        self.model = model
+        self.backend = backend
+        self.base_config = dict(base_config or {})
+
+    def ready(self) -> bool:
+        return self.engine is not None
+
+    def render_chunk(self, session: RealtimeAvatarSession, pcm_s16le: bytes) -> bytes:
+        with tempfile.TemporaryDirectory(prefix="omnirt-avatar-") as tmp:
+            tmpdir = Path(tmp)
+            image_path = tmpdir / f"{session.session_id}.png"
+            audio_path = tmpdir / f"{session.session_id}-{session.chunk_index}.wav"
+            image_path.write_bytes(session.image_bytes)
+            self._write_wav(audio_path, pcm_s16le, sample_rate=session.audio.sample_rate, channels=session.audio.channels)
+            request = GenerateRequest(
+                task="audio2video",
+                model=self.model,
+                backend=session.backend if session.backend != "auto" else self.backend,
+                inputs={"image": str(image_path), "audio": str(audio_path), "prompt": session.prompt},
+                config={
+                    **self.base_config,
+                    "output_dir": str(tmpdir),
+                    "max_chunks": 1,
+                    "audio_encode_mode": "once",
+                },
+            )
+            result = self.engine.run_sync(request)
+            if not result.outputs:
+                raise RuntimeError("resident avatar runtime produced no video artifact.")
+            return self._video_to_jpeg_sequence(Path(result.outputs[0].path), session.video)
+
+    @staticmethod
+    def _write_wav(path: Path, pcm_s16le: bytes, *, sample_rate: int, channels: int) -> None:
+        with wave.open(str(path), "wb") as wav:
+            wav.setnchannels(channels)
+            wav.setsampwidth(2)
+            wav.setframerate(sample_rate)
+            wav.writeframes(pcm_s16le)
+
+    @staticmethod
+    def _video_to_jpeg_sequence(path: Path, video: AvatarVideoSpec) -> bytes:
+        if not path.exists():
+            raise FileNotFoundError(f"resident avatar video artifact not found: {path}")
+        try:
+            import imageio.v2 as imageio
+        except ImportError as exc:
+            raise RuntimeError("imageio is required to stream resident avatar video chunks.") from exc
+        frames: list[bytes] = []
+        reader = imageio.get_reader(str(path))
+        try:
+            for index, frame in enumerate(reader):
+                if index >= max(video.frame_count, 1):
+                    break
+                image = Image.fromarray(frame).convert("RGB")
+                buffer = io.BytesIO()
+                image.save(buffer, format="JPEG", quality=85)
+                frames.append(buffer.getvalue())
+        finally:
+            reader.close()
+        if not frames:
+            raise RuntimeError(f"resident avatar video artifact contains no readable frames: {path}")
+        return encode_jpeg_sequence(frames)
+
+
 class RealtimeAvatarService:
     """In-memory v1 realtime avatar session service.
 
@@ -230,7 +314,7 @@ class RealtimeAvatarService:
     def __init__(
         self,
         *,
-        runtime: Optional[FakeRealtimeAvatarRuntime] = None,
+        runtime: Optional[Any] = None,
         allowed_frame_roots: Optional[list[str | Path]] = None,
     ) -> None:
         self.runtime = runtime or FakeRealtimeAvatarRuntime()

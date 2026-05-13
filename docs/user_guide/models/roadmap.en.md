@@ -4,7 +4,7 @@ This document defines the recommended digital-human roadmap for `omnirt` based o
 
 OmniRT is no longer optimizing for broad image / video model count. Existing integrations remain available in the registry, but the roadmap now prioritizes the digital-human vertical:
 
-- voice generation and voice reuse
+- voice generation, voice reuse, and voice understanding
 - audio-driven avatar video
 - realtime serving and resident workers
 - avatar assets and idle video material
@@ -20,7 +20,7 @@ Current implementation note:
 
 - OmniRT currently ships `sd15`, `sd21`, `sdxl-base-1.0`, `sdxl-turbo`, `sd3-medium`, `sd3.5-large`, `sd3.5-large-turbo`, `svd`, `svd-xt`, `flux-dev`, `flux-schnell`, `flux2.dev` / `flux2-dev`, `glm-image`, `hunyuan-image-2.1`, `omnigen`, `qwen-image`, `sana-1.6b`, `ovis-image`, `hidream-i1`, `cogvideox-2b`, `cogvideox-5b`, `kandinsky5-t2v`, `kandinsky5-i2v`, `wan2.1-t2v-14b`, `wan2.1-i2v-14b`, `wan2.2-t2v-14b`, `wan2.2-i2v-14b`, `hunyuan-video`, `hunyuan-video-1.5-t2v`, `hunyuan-video-1.5-i2v`, `helios-t2v`, `helios-i2v`, `sana-video`, `ltx-video`, `ltx2-i2v`, `soulx-flashtalk-14b`, and `soulx-flashhead-1.3b`
 - This means the codebase already has a broad model-zoo surface, but future work should not expand merely to look comprehensive
-- The roadmap below treats FlashTalk / FlashHead / LiveAct / CosyVoice as Core, and SDXL / Flux2 / Qwen-Image / SVD / Wan as adjacent digital-human asset capabilities
+- The roadmap below treats FlashTalk / FlashHead / LiveAct / CosyVoice / SenseVoice as Core, and SDXL / Flux2 / Qwen-Image / SVD / Wan as adjacent digital-human asset capabilities
 - For multi-task families, the current registry uses task-specific suffixes where needed, for example `helios-t2v` / `helios-i2v` and `hunyuan-video-1.5-t2v` / `hunyuan-video-1.5-i2v`
 
 ## Current snapshot
@@ -32,7 +32,7 @@ The highest priority is not adding more general models. It is completing a deplo
 - stable streaming TTS and reusable speaker profiles for `cosyvoice3-triton-trtllm`
 - resident workers, hot-path benchmarks, and realtime serving for `soulx-flashtalk-14b`
 - resident paths and deployment docs for `soulx-flashhead-1.3b` / `soulx-liveact-14b`
-- ASR / speech understanding entries such as Whisper / Paraformer / SenseVoice
+- ASR / speech understanding: first entrypoint is `sensevoice-small`; Whisper / Paraformer remain follow-up candidates
 - a minimal recommended set for avatar assets and idle video material
 
 ## Planning principles
@@ -93,6 +93,7 @@ Goal:
 Models:
 
 - `cosyvoice3-triton-trtllm`
+- `sensevoice-small`
 - `soulx-flashtalk-14b`
 - `soulx-flashhead-1.3b`
 - `soulx-liveact-14b`

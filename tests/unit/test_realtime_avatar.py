@@ -125,6 +125,19 @@ def test_audio2video_models_reports_wav2lip_unavailable_by_default() -> None:
     assert statuses["wav2lip"]["connected"] is False
 
 
+def test_audio2video_models_reports_resident_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OMNIRT_REALTIME_AVATAR_RUNTIME", "resident")
+    client = TestClient(create_app(default_backend="cpu-stub"))
+
+    response = client.get("/v1/audio2video/models")
+
+    assert response.status_code == 200
+    payload = response.json()
+    statuses = {item["id"]: item for item in payload["statuses"]}
+    assert statuses["flashtalk"]["connected"] is True
+    assert statuses["flashtalk"]["reason"] == "resident_runtime"
+
+
 def test_avatar_models_alias_reports_wav2lip_unavailable_by_default() -> None:
     client = TestClient(create_app(default_backend="cpu-stub"))
 

@@ -28,6 +28,11 @@ omnirt bench ... --output bench.json --json
 当前内置场景：
 
 - `core_audio2video_flashtalk_smoke`
+- `core_realtime_avatar_flashtalk_chunk`
+- `core_audio2video_flashhead_resident_warm`
+- `core_audio2video_liveact_resident_warm`
+- `core_text2audio_cosyvoice_first_packet`
+- `core_audio2text_sensevoice_batch`
 - `adjacent_text2image_sdxl_concurrent4`
 - `text2image_sdxl_concurrent4`
 
@@ -133,6 +138,16 @@ omnirt bench \
 - 模型来源与权重精度
 - 完整 CLI 命令
 - 产出的 JSON 报告
+
+## 发布门禁
+
+本地发布前可运行：
+
+```bash
+scripts/release_gate.sh
+```
+
+该脚本串起模型清单同步、双语文档一致性、`tests/unit tests/parity` 和 MkDocs strict build。真机 smoke / benchmark 仍按硬件环境单独执行并归档 JSON。
 
 ## CI 与真机基线怎么分工
 

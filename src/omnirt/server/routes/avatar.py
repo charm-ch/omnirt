@@ -164,22 +164,30 @@ async def _proxy_websocket(websocket: WebSocket, target_url: str) -> None:
 @router.get("/v1/avatar/models")
 async def list_audio2video_models(request: Request) -> dict[str, object]:
     service = request.app.state.realtime_avatar_service
-    wav2lip_connected = bool(getattr(getattr(service, "runtime", None), "wav2lip", None))
+    runtime = getattr(service, "runtime", None)
+    runtime_kind = str(getattr(runtime, "runtime_kind", "") or "")
+    wav2lip_connected = bool(getattr(runtime, "wav2lip", None))
     proxy_urls = _avatar_model_ws_urls(request)
     flashtalk_proxy = proxy_urls.get("flashtalk")
     wav2lip_proxy = proxy_urls.get("wav2lip")
-    flashtalk_connected = (
-        await _is_ws_url_reachable(flashtalk_proxy)
-        if flashtalk_proxy
-        else False
-    )
+    if runtime_kind == "resident":
+        ready = getattr(runtime, "ready", None)
+        flashtalk_connected = bool(ready() if callable(ready) else True)
+        flashtalk_reason = "resident_runtime"
+    else:
+        flashtalk_connected = (
+            await _is_ws_url_reachable(flashtalk_proxy)
+            if flashtalk_proxy
+            else False
+        )
+        flashtalk_reason = "proxy" if flashtalk_proxy else "fallback_runtime"
     if wav2lip_proxy:
         wav2lip_connected = await _is_ws_url_reachable(wav2lip_proxy)
     statuses = [
         {
             "id": "flashtalk",
             "connected": flashtalk_connected,
-            "reason": "proxy" if flashtalk_proxy else "fallback_runtime",
+            "reason": flashtalk_reason,
         },
         {
             "id": "wav2lip",

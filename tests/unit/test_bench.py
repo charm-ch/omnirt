@@ -86,8 +86,16 @@ def test_run_bench_aggregates_metrics() -> None:
 def test_built_in_bench_scenarios_prioritize_digital_human_tiers() -> None:
     scenarios = list_bench_scenarios()
     assert "core_audio2video_flashtalk_smoke" in scenarios
+    assert "core_realtime_avatar_flashtalk_chunk" in scenarios
+    assert "core_audio2video_flashhead_resident_warm" in scenarios
+    assert "core_audio2video_liveact_resident_warm" in scenarios
+    assert "core_text2audio_cosyvoice_first_packet" in scenarios
+    assert "core_audio2text_sensevoice_batch" in scenarios
     assert "adjacent_text2image_sdxl_concurrent4" in scenarios
 
     core = get_bench_scenario("core_audio2video_flashtalk_smoke")
     assert core.request_template.model == "soulx-flashtalk-14b"
     assert core.request_template.task == "audio2video"
+    asr = get_bench_scenario("core_audio2text_sensevoice_batch")
+    assert asr.request_template.model == "sensevoice-small"
+    assert asr.request_template.task == "audio2text"

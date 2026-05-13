@@ -135,6 +135,11 @@ Current built-in scenarios:
 - `text2image_sdxl_concurrent4`
 - `adjacent_text2image_sdxl_concurrent4`
 - `core_audio2video_flashtalk_smoke`
+- `core_realtime_avatar_flashtalk_chunk`
+- `core_audio2video_flashhead_resident_warm`
+- `core_audio2video_liveact_resident_warm`
+- `core_text2audio_cosyvoice_first_packet`
+- `core_audio2text_sensevoice_batch`
 
 ## `worker`
 

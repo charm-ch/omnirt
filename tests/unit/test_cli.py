@@ -58,6 +58,33 @@ def test_request_from_args_builds_text2image_request() -> None:
     assert request.config["seed"] == 9
 
 
+def test_request_from_args_builds_audio2text_request() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "generate",
+            "--task",
+            "audio2text",
+            "--model",
+            "sensevoice-small",
+            "--audio",
+            "speech.wav",
+            "--language",
+            "auto",
+            "--batch-size-s",
+            "30",
+        ]
+    )
+
+    request = request_from_args(args, parser)
+
+    assert request.task == "audio2text"
+    assert request.model == "sensevoice-small"
+    assert request.inputs["audio"] == "speech.wav"
+    assert request.config["language"] == "auto"
+    assert request.config["batch_size_s"] == 30
+
+
 def test_main_emits_json(tmp_path, monkeypatch, capsys) -> None:
     config_path = tmp_path / "request.yaml"
     config_path.write_text(

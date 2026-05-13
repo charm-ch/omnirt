@@ -13,3 +13,9 @@ OmniRT offers batch generation entry points and realtime avatar entry points. Ba
 
 !!! tip "Recommended order"
     For offline generation, start in Python or CLI to validate the contract, then deploy the HTTP server for concurrency, batching, and policy tuning. For an existing realtime avatar frontend, use the FlashTalk-compatible WebSocket path to connect the service first.
+
+Realtime avatar serving can run with three runtime modes:
+
+- `fake`: deterministic local JPEG chunks for protocol tests and CPU-stub demos.
+- `proxy`: pass the FlashTalk-compatible route through `OMNIRT_AVATAR_FLASHTALK_WS_URL`.
+- `resident`: serve chunks through OmniRT's resident `soulx-flashtalk-14b` path via `OMNIRT_REALTIME_AVATAR_RUNTIME=resident`.

@@ -20,6 +20,7 @@ PUBLIC_TASK_SURFACES = frozenset(
         "image2video",
         "audio2video",
         "text2audio",
+        "audio2text",
     }
 )
 
@@ -80,7 +81,17 @@ def add_request_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--config", help="Path to a YAML or JSON request file.")
     parser.add_argument(
         "--task",
-        choices=["text2image", "image2image", "inpaint", "edit", "text2video", "image2video", "audio2video", "text2audio"],
+        choices=[
+            "text2image",
+            "image2image",
+            "inpaint",
+            "edit",
+            "text2video",
+            "image2video",
+            "audio2video",
+            "text2audio",
+            "audio2text",
+        ],
         help="Task to run.",
     )
     parser.add_argument("--model", help="Model registry id to execute.")
@@ -123,6 +134,8 @@ def add_request_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--server-port", type=int, help="Triton gRPC server port for external service-backed models.")
     parser.add_argument("--sample-rate", type=int, help="Output audio sample rate for text2audio models.")
     parser.add_argument("--request-id", help="Stable external request id for deterministic service probes.")
+    parser.add_argument("--language", help="ASR language hint for audio2text models, for example auto, zh, en.")
+    parser.add_argument("--batch-size-s", type=int, help="Approximate ASR batch window in seconds.")
     parser.add_argument("--motion-bucket-id", type=int, help="Alias for SVD frame bucket / motion bucket id.")
     parser.add_argument(
         "--repo-path",
@@ -357,6 +370,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="auto",
         help="Default backend for realtime avatar sessions.",
     )
+    avatar_ws_parser.add_argument(
+        "--avatar-runtime",
+        choices=["fake", "proxy", "resident"],
+        help="Realtime avatar runtime selection; defaults to OMNIRT_REALTIME_AVATAR_RUNTIME or fake.",
+    )
 
     resident_flashtalk_parser = subparsers.add_parser(
         "resident-flashtalk-worker",
@@ -571,6 +589,10 @@ def request_from_args(args: argparse.Namespace, parser: argparse.ArgumentParser)
                 inputs["num_frames"] = args.num_frames
             if args.fps is not None:
                 inputs["fps"] = args.fps
+    elif args.task == "audio2text":
+        if not args.audio:
+            parser.error("--audio is required for --task audio2text")
+        inputs["audio"] = args.audio
     elif args.task == "image2video":
         if not args.image:
             parser.error("--image is required for --task image2video")
@@ -642,6 +664,8 @@ def request_from_args(args: argparse.Namespace, parser: argparse.ArgumentParser)
         "server_port",
         "sample_rate",
         "request_id",
+        "language",
+        "batch_size_s",
         "frame_bucket",
         "motion_bucket_id",
         "decode_chunk_size",
@@ -802,6 +826,8 @@ def chain_role_for_spec(spec) -> str:
         return "avatar-render"
     if spec.task == "text2audio":
         return "voice-generation"
+    if spec.task == "audio2text":
+        return "voice-understanding"
     if spec.task in {"text2image", "image2image", "inpaint", "edit"}:
         return "avatar-asset"
     if spec.task in {"text2video", "image2video"}:
@@ -1181,6 +1207,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return 2
         from omnirt.server import create_app as create_server_app
 
+        if args.avatar_runtime:
+            import os
+
+            os.environ["OMNIRT_REALTIME_AVATAR_RUNTIME"] = args.avatar_runtime
         app = create_server_app(default_backend=args.backend, max_concurrency=1, pipeline_cache_size=1)
         uvicorn.run(app, host=args.host, port=args.port)
         return 0

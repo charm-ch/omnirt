@@ -124,8 +124,14 @@ b"VIDX" + uint32(frame_count) + repeated(uint32(jpeg_len) + jpeg_bytes)
 {"type": "ping"}
 ```
 
-## Status
+## Runtime 模式
 
-The v1 endpoint establishes the public protocol and has a fake runtime for
-integration tests. Model-backed FlashTalk/Wav2Lip streaming plugs into the same
-service abstraction without changing the wire contract.
+v1 endpoint 保持 wire contract 稳定，不同部署可以选择不同 runtime：
+
+| 模式 | 选择方式 | 说明 |
+|---|---|---|
+| `fake` | 默认，或 `OMNIRT_REALTIME_AVATAR_RUNTIME=fake` | 为协议测试和 CPU-stub demo 输出确定性 JPEG chunk |
+| `proxy` | `OMNIRT_REALTIME_AVATAR_RUNTIME=proxy` + `OMNIRT_AVATAR_FLASHTALK_WS_URL` | 把 FlashTalk-compatible 路由转发到已有 WebSocket 服务 |
+| `resident` | `OMNIRT_REALTIME_AVATAR_RUNTIME=resident` | 通过 OmniRT resident `soulx-flashtalk-14b` 执行路径渲染 chunk |
+
+`GET /v1/audio2video/models` 会返回 `fallback_runtime`、`proxy` 或 `resident_runtime`，客户端可以据此区分协议测试模式和真实模型后端。

@@ -32,7 +32,7 @@ OmniRT is no longer trying to be a broad model zoo. General image and video mode
 - **Realtime avatar protocols** — FlashTalk-compatible WebSocket for OpenTalking compatibility, plus OmniRT Native Realtime Avatar WebSocket for new integrations
 - **Cross-backend** — the same request validates and runs on `cuda` / `ascend` / `cpu-stub`
 - **Three entry points** — Python API, CLI (`omnirt generate / validate / models`), FastAPI server
-- **Core avatar models** — FlashTalk / FlashHead / LiveAct / CosyVoice are the current validation line
+- **Core digital-human models** — FlashTalk / FlashHead / LiveAct / CosyVoice / SenseVoice are the current validation line
 - **Standard artifacts** — PNG for images, WAV for audio, MP4 for videos, each run ships a `RunReport`
 - **Offline-friendly** — local directories, Hugging Face, ModelScope, Modelers snapshots all supported
 - **LoRA flexibility** — local safetensors and `hf://` single-file refs side by side
@@ -47,6 +47,7 @@ OmniRT is no longer trying to be a broad model zoo. General image and video mode
 | `text2image` | prompt-driven image generation | PNG |
 | `image2image` | image-guided image generation | PNG |
 | `text2audio` | prompt-driven speech generation | WAV |
+| `audio2text` | offline speech recognition / voice understanding | TXT |
 | `text2video` | prompt-driven video generation | MP4 |
 | `image2video` | first-frame-guided video generation | MP4 |
 | `audio2video` | audio-driven talking avatar generation | MP4 |
@@ -141,7 +142,7 @@ A complete generated snapshot is at [docs/user_guide/models/supported_models.en.
 
 | Tier | Maintenance policy | Examples |
 |---|---|
-| Core | Requires registry, unit tests, real-hardware smoke, benchmark, and deployment docs | `soulx-flashtalk-14b`, `soulx-flashhead-1.3b`, `soulx-liveact-14b`, `cosyvoice3-triton-trtllm` |
+| Core | Requires registry, unit tests, real-hardware smoke, benchmark, and deployment docs | `soulx-flashtalk-14b`, `soulx-flashhead-1.3b`, `soulx-liveact-14b`, `cosyvoice3-triton-trtllm`, `sensevoice-small` |
 | Adjacent | Supports avatar assets, backgrounds, idle video, and digital-human content production; smoke tests are added by scenario | `sdxl-base-1.0`, `flux2.dev`, `qwen-image`, `svd-xt`, `wan2.2-*` |
 | Experimental | Keeps existing integrations, but is not a headline promise or dual-backend validation target | `kolors`, `pixart-sigma`, `bria-3.2`, `lumina-t2x`, `mochi`, `skyreels-v2`, and other general models |
 
@@ -164,8 +165,9 @@ Real end-to-end generation still depends on the target hardware stack, runtime l
 ## 📦 Project Status
 
 - `soulx-flashtalk-14b` has completed real-hardware validation on the Ascend 910B2 `persistent_worker` path
-- `soulx-liveact-14b` and `soulx-flashhead-1.3b` are integrated as script-backed `audio2video` wrappers
+- `soulx-liveact-14b` and `soulx-flashhead-1.3b` are integrated through the `persistent_worker` execution surface, with script-backed generation retained inside the worker
 - `cosyvoice3-triton-trtllm` is integrated as the CUDA-validated TTS baseline for the digital-human path
+- `sensevoice-small` is integrated as the first offline ASR / `audio2text` entrypoint
 - `sdxl-base-1.0` and `svd-xt` remain adjacent baselines for avatar assets and idle video material
 - Editing models such as `flux-fill`, `flux-kontext`, `qwen-image-edit`, and `qwen-image-edit-plus` have smoke-test entry points and are maintained as adjacent asset capabilities
 - `soulx-flashtalk-14b` can serve OpenTalking-style realtime avatar clients through the [FlashTalk-compatible WebSocket](./docs/user_guide/serving/flashtalk_ws.en.md) path

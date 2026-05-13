@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 
 from omnirt.core.types import (
     AdapterRef,
+    AudioToTextRequest,
     AudioToVideoRequest,
     BackendName,
     EditRequest,
@@ -75,6 +76,23 @@ def text2audio(
         prompt=prompt,
         audio=audio,
         reference_text=reference_text,
+        backend=backend,
+        config=dict(config),
+        adapters=adapters,
+    )
+
+
+def audio2text(
+    *,
+    model: str,
+    audio: str,
+    backend: BackendName = "auto",
+    adapters: Optional[List[AdapterRef]] = None,
+    **config: Any,
+) -> AudioToTextRequest:
+    return AudioToTextRequest(
+        model=model,
+        audio=audio,
         backend=backend,
         config=dict(config),
         adapters=adapters,

@@ -42,7 +42,7 @@ OmniRT 原生请求与 `GenerateRequest` 对齐：
 
 ## 字段规则
 
-- `task`：任务面，当前包括 `text2image`、`image2image`、`inpaint`、`edit`、`text2video`、`image2video`、`audio2video`
+- `task`：任务面，当前包括 `text2image`、`image2image`、`inpaint`、`edit`、`text2video`、`image2video`、`audio2video`、`text2audio`、`audio2text`
 - `model`：OmniRT registry id，而不是上游框架类名
 - `backend`：`auto`、`cuda`、`ascend`、`cpu-stub`
 - `inputs`：语义输入，如 `prompt`、`image`、`mask`、`audio`

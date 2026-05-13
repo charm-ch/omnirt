@@ -15,3 +15,9 @@ OmniRT 提供 batch 生成入口和实时数字人入口。batch 入口共享同
 
 !!! tip "建议顺序"
     离线生成先在 Python 或 CLI 下跑通 `validate` + `generate` 确认契约，再上 HTTP 服务做并发 / batching / 服务协议调优；已有实时数字人前端时，可以用 FlashTalk WebSocket 兼容入口先接通链路。
+
+实时数字人服务支持三种 runtime 模式：
+
+- `fake`：默认模式，输出确定性的 JPEG chunk，用于协议测试和 CPU-stub demo。
+- `proxy`：通过 `OMNIRT_AVATAR_FLASHTALK_WS_URL` 转发到已有 FlashTalk-compatible WebSocket 服务。
+- `resident`：通过 `OMNIRT_REALTIME_AVATAR_RUNTIME=resident` 使用 OmniRT resident `soulx-flashtalk-14b` 路径渲染 chunk。

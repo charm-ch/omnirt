@@ -7,7 +7,7 @@
 - **[Legacy 优化指南](legacy_optimization_guide.md)** — `legacy_call` 家族可用的 offload、layout、量化与 TeaCache 开关
 - **[Benchmark 基线](benchmark_baseline.md)** — bench 场景、JSON 指标和 release 验收口径
 - **[FlashTalk Resident Benchmark](flashtalk_resident_benchmark.md)** — `Ascend 910B2 x8` 上 resident 常驻链路的首轮真机性能结果
-- **[FlashHead Benchmark](flashhead_benchmark.md)** — `soulx-flashhead-1.3b` 在 OmniRT `subprocess` 包装路径下的首轮真机结果
+- **[FlashHead Benchmark](flashhead_benchmark.md)** — `soulx-flashhead-1.3b` 在 OmniRT script-backed 生成路径下的首轮真机结果；当前执行表面已切到 `persistent_worker`
 - **[模型接入](model_onboarding.md)** — 如何把一个新模型族注册进 registry 并通过校验
 - **[后端接入](backend_onboarding.md)** — 如何实现 `BackendRuntime` 把新硬件接进来
 
