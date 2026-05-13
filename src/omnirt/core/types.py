@@ -19,9 +19,10 @@ TaskName = Literal[
     "image2video",
     "audio2video",
     "text2audio",
+    "audio2text",
 ]
 BackendName = Literal["cuda", "ascend", "cpu-stub", "auto"]
-ArtifactKind = Literal["image", "video", "audio"]
+ArtifactKind = Literal["image", "video", "audio", "text"]
 AdapterKind = Literal["lora"]
 
 T = TypeVar("T")
@@ -360,6 +361,28 @@ class TextToAudioRequest(GenerateRequest):
         if reference_text:
             inputs["reference_text"] = reference_text
         super().__init__(task="text2audio", model=model, backend=backend, inputs=inputs, config=dict(config or {}), adapters=adapters)
+
+
+class AudioToTextRequest(GenerateRequest):
+    task: Literal["audio2text"] = "audio2text"
+
+    def __init__(
+        self,
+        *,
+        model: str,
+        audio: str,
+        backend: BackendName = "auto",
+        config: Optional[Dict[str, Any]] = None,
+        adapters: Optional[List[AdapterRef]] = None,
+    ) -> None:
+        super().__init__(
+            task="audio2text",
+            model=model,
+            backend=backend,
+            inputs={"audio": audio},
+            config=dict(config or {}),
+            adapters=adapters,
+        )
 
 
 class ImageToImageRequest(GenerateRequest):

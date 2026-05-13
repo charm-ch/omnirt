@@ -53,7 +53,7 @@ Architecture layers, model onboarding, ADRs, and architecture evolution notes.](
 ## OmniRT is **flexible** with
 
 - **Three entry points** — Python API, CLI (`omnirt generate / validate / models`), and FastAPI server
-- **Focused core models** — FlashTalk / FlashHead / LiveAct / CosyVoice are the current validation line
+- **Focused core models** — FlashTalk / FlashHead / LiveAct / CosyVoice / SenseVoice are the current validation line
 - **China-region friendly** — ModelScope, HF-Mirror, offline snapshots and internal mirrors work out of the box
 - **Async dispatch** — `queue` / `worker` / `policies` for batched requests and multi-model queues
 - **Pluggable telemetry** — `middleware.telemetry` plugs into your observability stack
@@ -76,6 +76,7 @@ See the full registry at [Supported Models](user_guide/models/supported_models.m
 | `text2image` | prompt | PNG | `sdxl-base-1.0`, `flux2.dev`, `qwen-image` |
 | `image2image` | prompt + image | PNG | `sdxl-base-1.0`, `sdxl-refiner-1.0` |
 | `text2audio` | prompt | WAV | `cosyvoice3-triton-trtllm` |
+| `audio2text` | audio | TXT | `sensevoice-small` |
 | `text2video` | prompt | MP4 | `wan2.2-t2v-14b`, `animate-diff-sdxl` |
 | `image2video` | prompt + first-frame | MP4 | `svd`, `svd-xt`, `wan2.2-i2v-14b` |
 | `audio2video` | audio + portrait | MP4 | `soulx-flashtalk-14b`, `soulx-flashhead-1.3b`, `soulx-liveact-14b` |

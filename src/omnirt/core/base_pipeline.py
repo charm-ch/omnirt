@@ -374,7 +374,8 @@ class BasePipeline(ABC):
             for key in DEVICE_MAP_CONFIG_KEYS:
                 if key in req.config:
                     resolved_config[key] = req.config[key]
-            denoise_guard(self.runtime)
+            if not getattr(self, "allow_cpu_stub_execution", False):
+                denoise_guard(self.runtime)
             denoised = timed("denoise_loop", lambda: self.denoise_loop(latents, conditions, req.config))
             raw = timed("decode", lambda: self.decode(denoised))
             outputs = timed("export", lambda: self.export(raw, req))

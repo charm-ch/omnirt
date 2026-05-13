@@ -53,7 +53,7 @@ OmniRT 为**数字人链路**提供一套统一生成运行时：语音生成、
 ## OmniRT **灵活**在哪里
 
 - **三种入口**：Python API、CLI (`omnirt generate / validate / models`) 与 FastAPI 服务
-- **核心模型聚焦**：FlashTalk / FlashHead / LiveAct / CosyVoice 是当前验证主线
+- **核心模型聚焦**：FlashTalk / FlashHead / LiveAct / CosyVoice / SenseVoice 是当前验证主线
 - **中国区友好**：开箱支持 ModelScope、HF-Mirror、离线快照、内网镜像
 - **异步派发**：`queue` / `worker` / `policies` 支持批量请求与多模型排队
 - **可插拔遥测**：`middleware.telemetry` 把运行指标接到你已有的观测栈
@@ -76,6 +76,7 @@ OmniRT 当前按三层维护模型：
 | `text2image` | prompt | PNG | `sdxl-base-1.0`, `flux2.dev`, `qwen-image` |
 | `image2image` | prompt + image | PNG | `sdxl-base-1.0`, `sdxl-refiner-1.0` |
 | `text2audio` | prompt | WAV | `cosyvoice3-triton-trtllm` |
+| `audio2text` | audio | TXT | `sensevoice-small` |
 | `text2video` | prompt | MP4 | `wan2.2-t2v-14b`, `animate-diff-sdxl` |
 | `image2video` | prompt + first-frame | MP4 | `svd`, `svd-xt`, `wan2.2-i2v-14b` |
 | `audio2video` | audio + portrait | MP4 | `soulx-flashtalk-14b`, `soulx-flashhead-1.3b`, `soulx-liveact-14b` |

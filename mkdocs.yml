@@ -116,6 +116,7 @@ plugins:
                     - Overview: user_guide/generation/index.md
                     - Text to Image: user_guide/generation/text2image.md
                     - Text to Audio: user_guide/generation/text2audio.md
+                    - Audio to Text: user_guide/generation/audio2text.md
                     - Image to Image: user_guide/generation/image2image.md
                     - Text to Video: user_guide/generation/text2video.md
                     - Image to Video: user_guide/generation/image2video.md
@@ -188,6 +189,7 @@ nav:
           - 概览: user_guide/generation/index.md
           - 文本到图像: user_guide/generation/text2image.md
           - 文本到音频: user_guide/generation/text2audio.md
+          - 音频到文本: user_guide/generation/audio2text.md
           - 图像到图像: user_guide/generation/image2image.md
           - 文本到视频: user_guide/generation/text2video.md
           - 图像到视频: user_guide/generation/image2video.md

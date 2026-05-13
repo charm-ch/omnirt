@@ -1,6 +1,6 @@
 # FlashHead Benchmark
 
-This document records the first real-hardware benchmark for `soulx-flashhead-1.3b` through OmniRT's `subprocess` wrapper. It is different from the external SoulX-FlashHead resident benchmark: this page measures the cold-start end-to-end path where OmniRT launches `generate_video.py`.
+This document records the first real-hardware benchmark for `soulx-flashhead-1.3b` through OmniRT's script-backed generation path. The registry now exposes FlashHead through the `persistent_worker` execution surface, but that worker still reuses the `generate_video.py` generation path captured here; the numbers remain a historical cold-start end-to-end baseline.
 
 ## Environment
 

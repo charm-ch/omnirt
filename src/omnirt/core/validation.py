@@ -228,7 +228,7 @@ def validate_request(request: GenerateRequest, *, backend: Optional[str] = None)
     except OmniRTError as exc:
         result.add_error(str(exc))
     else:
-        if result.resolved_backend == "cpu-stub":
+        if result.resolved_backend == "cpu-stub" and not getattr(spec.pipeline_cls, "allow_cpu_stub_execution", False):
             result.add_warning(
                 "Resolved backend is cpu-stub. Validation is fine, but full generation still needs CUDA or Ascend."
             )

@@ -10,7 +10,7 @@ from omnirt.engine import Controller, GrpcWorkerClient, OmniEngine, WorkerEndpoi
 from omnirt.engine.redis_store import RedisJobStore
 from omnirt.server.auth import ApiKeyMiddleware, load_api_keys
 from omnirt.server.model_aliases import load_model_aliases
-from omnirt.server.realtime_avatar import FakeRealtimeAvatarRuntime, RealtimeAvatarService
+from omnirt.server.realtime_avatar import FlashTalkResidentRealtimeRuntime, FakeRealtimeAvatarRuntime, RealtimeAvatarService
 from omnirt.server.routes.avatar import router as avatar_router
 from omnirt.server.routes.generate import router as generate_router
 from omnirt.server.routes.health import router as health_router
@@ -33,8 +33,20 @@ def _avatar_model_ws_urls_from_env() -> dict[str, str]:
     return mapping
 
 
-def _create_realtime_avatar_service() -> RealtimeAvatarService:
+def _create_realtime_avatar_service(*, engine, default_backend: str, default_request_config: dict[str, object]) -> RealtimeAvatarService:
     allowed_frame_roots = _allowed_frame_roots_from_env()
+    runtime_mode = os.environ.get("OMNIRT_REALTIME_AVATAR_RUNTIME", "fake").strip().lower()
+    if runtime_mode == "resident":
+        return RealtimeAvatarService(
+            runtime=FlashTalkResidentRealtimeRuntime(
+                engine=engine,
+                backend=default_backend if default_backend != "auto" else "ascend",
+                base_config=default_request_config,
+            ),
+            allowed_frame_roots=allowed_frame_roots,
+        )
+    if runtime_mode == "proxy":
+        return RealtimeAvatarService(allowed_frame_roots=allowed_frame_roots)
     if os.environ.get("OMNIRT_WAV2LIP_RUNTIME", "").strip().lower() not in {"1", "true", "opentalking"}:
         return RealtimeAvatarService(allowed_frame_roots=allowed_frame_roots)
     from omnirt.models.wav2lip.runtime import AvatarRuntimeRouter, Wav2LipRealtimeRuntime
@@ -103,7 +115,11 @@ def create_app(
     app.state.allowed_model_tiers = tuple(allowed_model_tiers or ())
     app.state.model_aliases = load_model_aliases(model_aliases_path)
     app.state.avatar_model_ws_urls = _avatar_model_ws_urls_from_env()
-    app.state.realtime_avatar_service = _create_realtime_avatar_service()
+    app.state.realtime_avatar_service = _create_realtime_avatar_service(
+        engine=app.state.engine,
+        default_backend=default_backend,
+        default_request_config=app.state.default_request_config,
+    )
     app.add_middleware(ApiKeyMiddleware, api_keys=load_api_keys(api_key_file))
     app.include_router(health_router)
     app.include_router(generate_router)

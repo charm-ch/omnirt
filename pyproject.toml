@@ -51,6 +51,9 @@ runtime = [
   "torch>=2.1",
   "transformers>=4.51",
 ]
+asr = [
+  "funasr>=1.2",
+]
 wav2lip-cuda = [
   "librosa>=0.10",
   "opencv-python-headless>=4.8",

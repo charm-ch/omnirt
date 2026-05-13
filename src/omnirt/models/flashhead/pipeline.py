@@ -14,6 +14,7 @@ from omnirt.core.registry import ModelCapabilities, register_model
 from omnirt.core.types import Artifact, DependencyUnavailableError, GenerateRequest
 from omnirt.launcher import resolve_launcher
 from omnirt.models.flashhead.components import flashhead_setting
+from omnirt.workers import GrpcResidentWorkerProxy, PipelineResidentWorker
 
 
 @dataclass(frozen=True)
@@ -58,7 +59,7 @@ class FlashHeadLaunchConfig:
     id="soulx-flashhead-1.3b",
     task="audio2video",
     default_backend="ascend",
-    execution_mode="subprocess",
+    execution_mode="persistent_worker",
     resource_hint={
         "min_vram_gb": 48,
         "vram_scope": "aggregate",
@@ -73,6 +74,7 @@ class FlashHeadLaunchConfig:
             "repo_path",
             "ckpt_dir",
             "wav2vec_dir",
+            "resident_target",
             "model_type",
             "seed",
             "output_dir",
@@ -121,6 +123,19 @@ class FlashHeadPipeline(BasePipeline):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._launch: Optional[FlashHeadLaunchConfig] = None
+
+    @classmethod
+    def create_persistent_worker(cls, *, runtime, model_spec, config, adapters):
+        resident_target = cls._normalize_optional_string(config.get("resident_target"))
+        if resident_target:
+            return GrpcResidentWorkerProxy(resident_target)
+        return PipelineResidentWorker(
+            pipeline_cls=cls,
+            runtime=runtime,
+            model_spec=model_spec,
+            config=config,
+            adapters=adapters,
+        )
 
     def prepare_conditions(self, req: GenerateRequest) -> Dict[str, Any]:
         image_path = Path(str(req.inputs.get("image", ""))).expanduser()

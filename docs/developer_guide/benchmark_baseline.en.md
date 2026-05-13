@@ -28,6 +28,11 @@ omnirt bench ... --output bench.json --json
 Current built-in scenario:
 
 - `core_audio2video_flashtalk_smoke`
+- `core_realtime_avatar_flashtalk_chunk`
+- `core_audio2video_flashhead_resident_warm`
+- `core_audio2video_liveact_resident_warm`
+- `core_text2audio_cosyvoice_first_packet`
+- `core_audio2text_sensevoice_batch`
 - `adjacent_text2image_sdxl_concurrent4`
 - `text2image_sdxl_concurrent4`
 
@@ -133,6 +138,16 @@ Each benchmark artifact should be stored with:
 - model source and weight precision
 - full CLI command
 - the JSON report itself
+
+## Release gate
+
+Before publishing, run:
+
+```bash
+scripts/release_gate.sh
+```
+
+The script checks model-doc generation, bilingual docs, `tests/unit tests/parity`, and a strict MkDocs build. Real-hardware smoke and benchmark runs remain separate because they depend on CUDA / Ascend hosts and local model weights.
 
 ## CI baseline vs real-hardware baseline
 

@@ -6,6 +6,7 @@ from omnirt import requests
 from omnirt.core.presets import available_presets
 from omnirt.core.types import (
     AudioToVideoRequest,
+    AudioToTextRequest,
     EditRequest,
     GenerateRequest,
     GenerateResult,
@@ -36,6 +37,7 @@ __all__ = [
     "TextToImageRequest",
     "TextToVideoRequest",
     "TextToAudioRequest",
+    "AudioToTextRequest",
     "ImageToImageRequest",
     "InpaintRequest",
     "EditRequest",
