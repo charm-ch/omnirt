@@ -2,7 +2,7 @@
 
 OmniRT exposes [`model_backends/musetalk/musetalk_ws_server.py`](https://github.com/datascale-ai/omnirt/blob/main/model_backends/musetalk/musetalk_ws_server.py) with the **same WebSocket protocol** as FlashTalk / Wav2Lip WS (JSON `init` / `init_ok`, binary `AUDI` chunks, `VIDX` JPEG frames). Set **OpenTalking** to **`OPENTALKING_FLASHTALK_MODE=remote`** and point **`OPENTALKING_FLASHTALK_WS_URL`** here—no client protocol changes.
 
-Inference uses OpenTalking’s **MuseTalk v1.5** adapter (UNet / VAE / Whisper features, etc.). The server must resolve OpenTalking **`src`** on **`PYTHONPATH`** (the launcher defaults to `<omnirt>/../opentalking/src`; override with env vars).
+Inference and MuseTalk source loading run on the **OmniRT** side. OpenTalking only selects the model, orchestrates sessions, and connects to this service. The official MuseTalk source is managed by `omnirt runtime install musetalk --device <cuda|npu|cpu>`.
 
 Directory layout, weights, and troubleshooting: [`model_backends/musetalk/README.md`](https://github.com/datascale-ai/omnirt/blob/main/model_backends/musetalk/README.md).
 
@@ -62,10 +62,11 @@ Align **torch / torchvision / torch-npu** with **`model_backends/flashtalk/requi
 
 Graph compilation may still require **`attrs`**, **`psutil`**, **`PyYAML`**, etc. (listed in the file); add packages if imports fail.
 
-### 4. Weights and OpenTalking source
+### 4. MuseTalk source and weights
 
-- **Root directory:** default `<omnirt>/models`, controlled by **`OMNIRT_MUSETALK_MODELS_DIR`** (the server also sets **`OPENTALKING_MODELS_DIR`**).
-- Layout must satisfy OpenTalking **`resolve_musetalk_v15`** (`musetalk/`, `sd-vae-ft-mse/`, `whisper/tiny.pt`, …)—see [`model_backends/musetalk/README.md`](https://github.com/datascale-ai/omnirt/blob/main/model_backends/musetalk/README.md).
+- **MuseTalk source:** run `omnirt runtime install musetalk --device npu`; by default it clones to `${OMNIRT_HOME}/model-repos/MuseTalk`.
+- **Root directory:** default `<omnirt>/models`, controlled by **`OMNIRT_MUSETALK_MODELS_DIR`**.
+- Layout must satisfy MuseTalk v1.5 loading (`musetalk/`, `sd-vae-ft-mse/`, `whisper/tiny.pt`, …)—see [`model_backends/musetalk/README.md`](https://github.com/datascale-ai/omnirt/blob/main/model_backends/musetalk/README.md).
 - **`whisper/tiny.pt`** must be the official **OpenAI `openai-whisper`** checkpoint (~72 MB). Do not rename a Hugging Face `pytorch_model.bin` and expect it to work.
 
 ### 5. Inference variables (selection)
@@ -75,8 +76,8 @@ Graph compilation may still require **`attrs`**, **`psutil`**, **`PyYAML`**, etc
 | `OMNIRT_MUSETALK_PYTHON` | Python from the venv above |
 | `OMNIRT_MUSETALK_DEVICE` | `auto` (default, prefers NPU), `npu`, or `cpu` |
 | `OMNIRT_MUSETALK_NPU_INDEX` | Logical NPU index (default `0`) |
+| `OMNIRT_MUSETALK_REPO` | MuseTalk source checkout; default `${OMNIRT_HOME}/model-repos/MuseTalk` |
 | `OMNIRT_MUSETALK_MODELS_DIR` | Model root |
-| `OMNIRT_MUSETALK_OPENTALKING_SRC` | OpenTalking **`src`** directory |
 | `OMNIRT_MUSETALK_MAX_LONG_EDGE` | Max long edge for reference images in `init` (default `768`; `0` disables scaling) |
 | `OMNIRT_MUSETALK_PRELOAD` | When `1`, loads models before listening |
 | `OMNIRT_MUSETALK_DEFAULT_REF_IMAGE` | Local fallback image when `init` omits `ref_image` (optional) |
@@ -87,9 +88,10 @@ Full list: `scripts/start_musetalk_ws.sh --help`.
 
 ```bash
 cd /path/to/omnirt
-export OMNIRT_MUSETALK_PYTHON=/path/to/venvs/omnirt-musetalk-ascend/bin/python
+omnirt runtime install musetalk --device npu
+export OMNIRT_MUSETALK_PYTHON=$OMNIRT_HOME/runtimes/musetalk/npu/venv/bin/python
+export OMNIRT_MUSETALK_REPO=$OMNIRT_HOME/model-repos/MuseTalk
 export OMNIRT_MUSETALK_MODELS_DIR=/path/to/omnirt/models
-export OMNIRT_MUSETALK_OPENTALKING_SRC=/path/to/opentalking/src   # if default ../opentalking/src is wrong
 bash scripts/start_musetalk_ws.sh
 ```
 

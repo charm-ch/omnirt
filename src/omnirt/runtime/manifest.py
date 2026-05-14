@@ -18,19 +18,21 @@ class RuntimeManifest:
     profile: str
     manifest_path: Path
     repo_url: str
-    checkpoint_url: str
-    wav2vec_repo_id: str
+    checkpoint_url: str | None
+    wav2vec_repo_id: str | None
     runtime_dir: Path
     repo_dir: Path
     requirements_file: Path
-    env_script: Path
+    env_script: Path | None
     server_path: Path
     ckpt_dir: str
     wav2vec_dir: str
     python_version: str
     nproc_per_node: int
     pip_index_url: str
+    pip_extra_index_url: str | None
     hf_endpoint: str
+    repo_marker_dir: str | None
 
     @property
     def venv_dir(self) -> Path:
@@ -89,6 +91,22 @@ def _required_string(data: dict[str, Any], key: str) -> str:
     return value.strip()
 
 
+def _optional_string(data: dict[str, Any], key: str) -> str | None:
+    value = data.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"runtime manifest field {key!r} must be a string")
+    value = value.strip()
+    return value or None
+
+
+def _default_repo_marker_dir(name: str) -> str | None:
+    if name == "flashtalk":
+        return "flash_talk"
+    return None
+
+
 def manifest_path(name: str, device: str) -> Path:
     candidates = [
         project_root() / "model_backends" / name / f"runtime.{device}.yaml",
@@ -113,7 +131,9 @@ def load_manifest(name: str, device: str = "ascend") -> RuntimeManifest:
     runtime = _required_mapping(data, "runtime")
     paths = _required_mapping(data, "paths")
     launch = _required_mapping(data, "launch")
-    defaults = _required_mapping(data, "defaults")
+    defaults = data.get("defaults") or {}
+    if not isinstance(defaults, dict):
+        raise ValueError("runtime manifest field 'defaults' must be a mapping")
     install = _required_mapping(data, "install")
 
     requirements_file = expand_path_template(
@@ -133,8 +153,8 @@ def load_manifest(name: str, device: str = "ascend") -> RuntimeManifest:
         profile=profile,
         manifest_path=path,
         repo_url=_required_string(sources, "repo_url"),
-        checkpoint_url=_required_string(sources, "checkpoint_url"),
-        wav2vec_repo_id=_required_string(sources, "wav2vec_repo_id"),
+        checkpoint_url=_optional_string(sources, "checkpoint_url"),
+        wav2vec_repo_id=_optional_string(sources, "wav2vec_repo_id"),
         runtime_dir=expand_path_template(
             _required_string(paths, "runtime_dir"),
             name=manifest_name,
@@ -146,16 +166,18 @@ def load_manifest(name: str, device: str = "ascend") -> RuntimeManifest:
             device=manifest_device,
         ),
         requirements_file=requirements_file,
-        env_script=expand_path_template(
-            _required_string(runtime, "env_script"),
-            name=manifest_name,
-            device=manifest_device,
+        env_script=(
+            expand_path_template(_optional_string(runtime, "env_script"), name=manifest_name, device=manifest_device)
+            if _optional_string(runtime, "env_script")
+            else None
         ),
         server_path=server_path,
-        ckpt_dir=_required_string(defaults, "ckpt_dir"),
-        wav2vec_dir=_required_string(defaults, "wav2vec_dir"),
+        ckpt_dir=str(defaults.get("ckpt_dir") or ""),
+        wav2vec_dir=str(defaults.get("wav2vec_dir") or ""),
         python_version=str(runtime.get("python", "3.10")),
         nproc_per_node=int(runtime.get("nproc_per_node", 8)),
         pip_index_url=str(install.get("pip_index_url", "https://pypi.tuna.tsinghua.edu.cn/simple")),
+        pip_extra_index_url=_optional_string(install, "pip_extra_index_url"),
         hf_endpoint=str(install.get("hf_endpoint", "https://hf-mirror.com")),
+        repo_marker_dir=_optional_string(install, "repo_marker_dir") or _default_repo_marker_dir(manifest_name),
     )

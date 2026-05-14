@@ -28,6 +28,7 @@ class RuntimeState:
     torchrun: str
     server_path: str
     nproc_per_node: int
+    repo_marker_dir: str
 
     @classmethod
     def from_manifest(cls, manifest: RuntimeManifest) -> "RuntimeState":
@@ -40,19 +41,22 @@ class RuntimeState:
             repo_path=str(manifest.repo_dir),
             ckpt_dir=manifest.ckpt_dir,
             wav2vec_dir=manifest.wav2vec_dir,
-            env_script=str(manifest.env_script),
+            env_script=str(manifest.env_script or ""),
             venv_activate=str(manifest.activate_path),
             python=str(manifest.python_path),
             torchrun=str(manifest.torchrun_path),
             server_path=str(manifest.server_path),
             nproc_per_node=manifest.nproc_per_node,
+            repo_marker_dir=manifest.repo_marker_dir or "",
         )
 
     @property
     def state_path(self) -> Path:
         return runtime_state_path(self.name, self.device)
 
-    def to_env(self, *, prefix: str = "OMNIRT_FLASHTALK_") -> dict[str, str]:
+    def to_env(self, *, prefix: str | None = None) -> dict[str, str]:
+        if prefix is None:
+            prefix = f"OMNIRT_{self.name.upper()}_"
         return {
             f"{prefix}REPO_PATH": self.repo_path,
             f"{prefix}SERVER_PATH": self.server_path,
@@ -88,38 +92,45 @@ def load_state(name: str, device: str = "ascend") -> RuntimeState:
 
 
 def _state_from_mapping(data: dict[str, Any]) -> RuntimeState:
+    name = str(data["name"])
     return RuntimeState(
-        name=str(data["name"]),
+        name=name,
         device=str(data["device"]),
         profile=str(data.get("profile") or data["device"]),
         manifest_path=str(data["manifest_path"]),
         runtime_dir=str(data["runtime_dir"]),
         repo_path=str(data["repo_path"]),
-        ckpt_dir=str(data["ckpt_dir"]),
-        wav2vec_dir=str(data["wav2vec_dir"]),
-        env_script=str(data["env_script"]),
+        ckpt_dir=str(data.get("ckpt_dir") or ""),
+        wav2vec_dir=str(data.get("wav2vec_dir") or ""),
+        env_script=str(data.get("env_script") or ""),
         venv_activate=str(data["venv_activate"]),
         python=str(data["python"]),
         torchrun=str(data["torchrun"]),
         server_path=str(data["server_path"]),
         nproc_per_node=int(data["nproc_per_node"]),
+        repo_marker_dir=str(data.get("repo_marker_dir") or ("flash_talk" if name == "flashtalk" else "")),
     )
 
 
 def status_checks(state: RuntimeState) -> list[tuple[str, Path, bool]]:
     repo_path = Path(state.repo_path)
-    return [
+    checks = [
         ("state", state.state_path, state.state_path.exists()),
         ("runtime_dir", Path(state.runtime_dir), Path(state.runtime_dir).exists()),
         ("python", Path(state.python), Path(state.python).is_file()),
         ("torchrun", Path(state.torchrun), Path(state.torchrun).is_file()),
-        ("env_script", Path(state.env_script), Path(state.env_script).is_file()),
         ("repo_path", repo_path, repo_path.is_dir()),
-        ("flash_talk", repo_path / "flash_talk", (repo_path / "flash_talk").is_dir()),
-        ("ckpt_dir", _repo_relative(repo_path, state.ckpt_dir), _repo_relative(repo_path, state.ckpt_dir).is_dir()),
-        ("wav2vec_dir", _repo_relative(repo_path, state.wav2vec_dir), _repo_relative(repo_path, state.wav2vec_dir).is_dir()),
         ("server_path", Path(state.server_path), Path(state.server_path).is_file()),
     ]
+    if state.env_script:
+        checks.append(("env_script", Path(state.env_script), Path(state.env_script).is_file()))
+    if state.repo_marker_dir:
+        checks.append((state.repo_marker_dir, repo_path / state.repo_marker_dir, (repo_path / state.repo_marker_dir).is_dir()))
+    if state.ckpt_dir:
+        checks.append(("ckpt_dir", _repo_relative(repo_path, state.ckpt_dir), _repo_relative(repo_path, state.ckpt_dir).is_dir()))
+    if state.wav2vec_dir:
+        checks.append(("wav2vec_dir", _repo_relative(repo_path, state.wav2vec_dir), _repo_relative(repo_path, state.wav2vec_dir).is_dir()))
+    return checks
 
 
 def _repo_relative(repo_path: Path, value: str) -> Path:

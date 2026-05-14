@@ -18,6 +18,22 @@ def test_load_flashtalk_runtime_manifest_uses_project_home_by_default(monkeypatc
     assert manifest.repo_dir == project_root() / ".omnirt" / "model-repos" / "SoulX-FlashTalk"
     assert manifest.ckpt_dir == "models/SoulX-FlashTalk-14B"
     assert manifest.server_path == Path("model_backends/flashtalk/flashtalk_ws_server.py").resolve()
+    assert manifest.repo_marker_dir == "flash_talk"
+
+
+def test_load_musetalk_cuda_runtime_manifest(monkeypatch) -> None:
+    monkeypatch.delenv("OMNIRT_HOME", raising=False)
+
+    manifest = load_manifest("musetalk", "cuda")
+
+    assert manifest.name == "musetalk"
+    assert manifest.device == "cuda"
+    assert manifest.repo_url == "https://github.com/TMElyralab/MuseTalk.git"
+    assert manifest.repo_marker_dir == "musetalk"
+    assert manifest.checkpoint_url is None
+    assert manifest.wav2vec_repo_id is None
+    assert manifest.repo_dir == project_root() / ".omnirt" / "model-repos" / "MuseTalk"
+    assert manifest.server_path == Path("model_backends/musetalk/musetalk_ws_server.py").resolve()
 
 
 def test_manifest_overrides_runtime_paths(monkeypatch, tmp_path: Path) -> None:
@@ -73,6 +89,20 @@ def test_plan_skips_existing_repo_checkpoint_and_wav2vec(monkeypatch, tmp_path: 
     assert ["skip", "SoulX-FlashTalk checkout", str(manifest.repo_dir), "contains flash_talk/"] in commands
     assert ["skip", "FlashTalk checkpoint", str(manifest.resolved_ckpt_dir), "already exists"] in commands
     assert ["skip", "wav2vec", str(manifest.resolved_wav2vec_dir), "already exists"] in commands
+
+
+def test_musetalk_plan_only_manages_repo_and_venv(monkeypatch, tmp_path: Path) -> None:
+    from omnirt.runtime.installer import RuntimeInstaller
+
+    monkeypatch.setenv("OMNIRT_HOME", str(tmp_path / "home"))
+    manifest = load_manifest("musetalk", "cuda")
+    (manifest.repo_dir / "musetalk").mkdir(parents=True)
+
+    commands = RuntimeInstaller(manifest).plan_commands(update=True)
+
+    assert ["skip", "MuseTalk checkout", str(manifest.repo_dir), "contains musetalk/"] in commands
+    assert not any("checkpoint" in " ".join(command) for command in commands)
+    assert not any("wav2vec" in command for command in commands for command in command)
 
 
 def test_plan_recreate_venv_keeps_model_resources(monkeypatch, tmp_path: Path) -> None:

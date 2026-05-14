@@ -2,7 +2,7 @@
 
 与 SoulX FlashTalk / OmniRT Wav2Lip **同一套 WebSocket 协议**（`AUDI` / `VIDX`、`init` / `init_ok`），OpenTalking 可配置为 **remote flashtalk** 连到本服务。
 
-推理走 **OpenTalking** 里的 MuseTalk v1.5 适配器（需把 OpenTalking 的 `src` 放到 `PYTHONPATH`，启动脚本已处理）。
+推理与 MuseTalk 源码加载都在 **OmniRT** 侧完成；OpenTalking 只负责选择模型、编排会话并连接本服务。
 
 本目录只保留必要文件：
 
@@ -20,6 +20,15 @@
 ---
 
 ## 环境安装
+
+推荐使用 OmniRT runtime 管理 MuseTalk 源码与 Python 环境：
+
+```bash
+cd /path/to/omnirt
+omnirt runtime install musetalk --device cuda
+```
+
+该命令会把官方 MuseTalk 仓克隆到 `${OMNIRT_HOME}/model-repos/MuseTalk`，并创建 `${OMNIRT_HOME}/runtimes/musetalk/<device>/venv`。不需要在 OpenTalking 的 quickstart env 中指定 MuseTalk repo。
 
 ### 昇腾（当前主要适配）
 
@@ -48,7 +57,7 @@ pip install -r model_backends/musetalk/requirements-musetalk-gpu.txt \
 
 ## 权重目录（`OMNIRT_MUSETALK_MODELS_DIR`，默认 `<omnirt>/models`）
 
-须满足 OpenTalking `resolve_musetalk_v15`（见 `opentalking/.../musetalk/loader.py`）：
+须满足 MuseTalk v1.5 加载所需的目录结构：
 
 | 相对路径 | 说明 |
 |----------|------|
@@ -70,9 +79,9 @@ Face-parse 可从 HF 镜像等获取与 MuseTalk 脚本一致的 `79999_iter.pth
 
 ```bash
 cd /path/to/omnirt
-export OMNIRT_MUSETALK_PYTHON=/path/to/venv/bin/python   # 可选
+export OMNIRT_MUSETALK_PYTHON=$OMNIRT_HOME/runtimes/musetalk/cuda/venv/bin/python
+export OMNIRT_MUSETALK_REPO=$OMNIRT_HOME/model-repos/MuseTalk
 export OMNIRT_MUSETALK_MODELS_DIR=/path/to/omnirt/models # 可选
-export OMNIRT_MUSETALK_OPENTALKING_SRC=/path/to/opentalking/src  # 可选
 bash scripts/start_musetalk_ws.sh
 ```
 
@@ -87,8 +96,8 @@ OpenTalking：`OPENTALKING_FLASHTALK_MODE=remote`，`OPENTALKING_FLASHTALK_WS_UR
 | 变量 | 含义 |
 |------|------|
 | `OMNIRT_MUSETALK_HOST` / `PORT` | 绑定地址 / 端口 |
+| `OMNIRT_MUSETALK_REPO` | MuseTalk 源码 checkout；默认 `${OMNIRT_HOME}/model-repos/MuseTalk` |
 | `OMNIRT_MUSETALK_MODELS_DIR` | 权重根目录 |
-| `OMNIRT_MUSETALK_OPENTALKING_SRC` | OpenTalking `src` 目录 |
 | `OMNIRT_MUSETALK_DEVICE` | `auto` / `npu` / `cuda` / `cpu` |
 | `OMNIRT_MUSETALK_MAX_LONG_EDGE` | `init` 里 ref 图最长边上限（默认 768；`0` 表示不缩放） |
 | `OMNIRT_MUSETALK_JPEG_QUALITY` | 输出 VIDX JPEG 质量 |

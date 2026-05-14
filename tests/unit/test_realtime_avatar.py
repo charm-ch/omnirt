@@ -183,6 +183,30 @@ def test_audio2video_models_reports_proxy_targets(monkeypatch: pytest.MonkeyPatc
     assert statuses["quicktalk"]["reason"] == "proxy"
 
 
+def test_audio2video_models_reports_musetalk_proxy_target(monkeypatch: pytest.MonkeyPatch) -> None:
+    from omnirt.server.routes import avatar as avatar_routes
+
+    async def fake_reachable(_url: str) -> bool:
+        return True
+
+    monkeypatch.setattr(avatar_routes, "_is_ws_url_reachable", fake_reachable)
+    client = TestClient(create_app(default_backend="cpu-stub"))
+    client.app.state.avatar_model_ws_urls = {
+        "musetalk": "ws://127.0.0.1:8766",
+    }
+
+    response = client.get("/v1/audio2video/models")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["models"] == ["musetalk"]
+    statuses = {item["id"]: item for item in payload["statuses"]}
+    assert statuses["musetalk"]["connected"] is True
+    assert statuses["musetalk"]["reason"] == "proxy"
+    assert statuses["flashtalk"]["connected"] is False
+    assert statuses["wav2lip"]["connected"] is False
+
+
 def test_audio2video_models_reads_proxy_targets_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     from omnirt.server.routes import avatar as avatar_routes
 
@@ -224,6 +248,28 @@ def test_audio2video_models_reports_quicktalk_runtime() -> None:
     statuses = {item["id"]: item for item in payload["statuses"]}
     assert statuses["quicktalk"]["connected"] is True
     assert statuses["quicktalk"]["reason"] == "quicktalk_runtime"
+
+
+def test_audio2video_models_reads_musetalk_proxy_target_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from omnirt.server.routes import avatar as avatar_routes
+
+    async def fake_reachable(_url: str) -> bool:
+        return True
+
+    monkeypatch.setenv("OMNIRT_AVATAR_MUSETALK_WS_URL", "ws://127.0.0.1:8766")
+    monkeypatch.setattr(avatar_routes, "_is_ws_url_reachable", fake_reachable)
+
+    client = TestClient(create_app(default_backend="cpu-stub"))
+    response = client.get("/v1/audio2video/models")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["models"] == ["musetalk"]
+    statuses = {item["id"]: item for item in payload["statuses"]}
+    assert statuses["musetalk"]["connected"] is True
+    assert statuses["musetalk"]["reason"] == "proxy"
 
 
 def test_flashtalk_compatible_ws_errors() -> None:
@@ -274,6 +320,42 @@ def test_flashtalk_compatible_ws_reports_runtime_errors() -> None:
     assert error["type"] == "error"
     assert error["code"] == "runtime_error"
     assert "model failed" in error["message"]
+
+
+def test_musetalk_compatible_ws_reports_proxy_not_configured() -> None:
+    client = TestClient(create_app(default_backend="cpu-stub"))
+
+    with client.websocket_connect("/v1/audio2video/musetalk") as ws:
+        error = ws.receive_json()
+
+    assert error["type"] == "error"
+    assert error["code"] == "musetalk_proxy_not_configured"
+    assert "OMNIRT_AVATAR_MUSETALK_WS_URL" in error["message"]
+
+
+def test_musetalk_compatible_ws_uses_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
+    from omnirt.server.routes import avatar as avatar_routes
+
+    calls: list[tuple[object, str]] = []
+
+    async def fake_proxy(websocket, target_url: str) -> None:
+        calls.append((websocket, target_url))
+        await websocket.accept()
+        await websocket.send_json({"type": "proxied", "target": target_url})
+        await websocket.close()
+
+    monkeypatch.setattr(avatar_routes, "_proxy_websocket", fake_proxy)
+    client = TestClient(create_app(default_backend="cpu-stub"))
+    client.app.state.avatar_model_ws_urls = {
+        "musetalk": "ws://127.0.0.1:8766",
+    }
+
+    with client.websocket_connect("/v1/audio2video/musetalk") as ws:
+        proxied = ws.receive_json()
+
+    assert proxied["type"] == "proxied"
+    assert proxied["target"] == "ws://127.0.0.1:8766"
+    assert len(calls) == 1
 
 
 def test_native_realtime_avatar_ws_flow() -> None:

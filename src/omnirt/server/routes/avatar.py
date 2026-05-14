@@ -126,8 +126,16 @@ async def _is_ws_url_reachable(url: str) -> bool:
             from websockets.asyncio.client import connect
         except ImportError:
             from websockets import connect  # type: ignore
-        async with connect(url, open_timeout=0.5, close_timeout=0.2, max_size=1024):
-            pass
+        kwargs = {"max_size": 1024}
+        try:
+            async with connect(url, open_timeout=0.5, close_timeout=0.2, **kwargs):
+                pass
+        except TypeError:
+            # Some websockets builds expose a connect() signature that doesn't
+            # accept timeout kwargs. Fall back to the minimal call so runtime
+            # proxy backends such as MuseTalk still report healthy.
+            async with connect(url, **kwargs):
+                pass
         return True
     except Exception:
         return False
@@ -189,19 +197,24 @@ async def list_audio2video_models(request: Request) -> dict[str, object]:
     quicktalk_connected = bool(getattr(runtime, "quicktalk", None))
     proxy_urls = _avatar_model_ws_urls(request)
     flashtalk_proxy = proxy_urls.get("flashtalk")
+    musetalk_proxy = proxy_urls.get("musetalk")
     wav2lip_proxy = proxy_urls.get("wav2lip")
     quicktalk_proxy = proxy_urls.get("quicktalk")
-    if runtime_kind == "resident":
+    if flashtalk_proxy:
+        flashtalk_connected = await _is_ws_url_reachable(flashtalk_proxy)
+        flashtalk_reason = "proxy"
+    elif runtime_kind == "resident":
         ready = getattr(runtime, "ready", None)
         flashtalk_connected = bool(ready() if callable(ready) else True)
         flashtalk_reason = "resident_runtime"
     else:
-        flashtalk_connected = (
-            await _is_ws_url_reachable(flashtalk_proxy)
-            if flashtalk_proxy
-            else False
-        )
-        flashtalk_reason = "proxy" if flashtalk_proxy else "fallback_runtime"
+        flashtalk_connected = False
+        flashtalk_reason = "fallback_runtime"
+    musetalk_connected = (
+        await _is_ws_url_reachable(musetalk_proxy)
+        if musetalk_proxy
+        else False
+    )
     if wav2lip_proxy:
         wav2lip_connected = await _is_ws_url_reachable(wav2lip_proxy)
     if quicktalk_proxy:
@@ -229,6 +242,11 @@ async def list_audio2video_models(request: Request) -> dict[str, object]:
                 if quicktalk_proxy
                 else ("quicktalk_runtime" if quicktalk_connected else "runtime_not_enabled")
             ),
+        },
+        {
+            "id": "musetalk",
+            "connected": musetalk_connected,
+            "reason": "proxy" if musetalk_proxy else "not_configured",
         },
     ]
     return {
@@ -396,6 +414,26 @@ async def quicktalk_compatible_avatar(websocket: WebSocket):
         await _proxy_websocket(websocket, proxy_url)
         return
     await _flashtalk_compatible_loop(websocket, model="quicktalk")
+
+
+@router.websocket("/v1/audio2video/musetalk")
+@router.websocket("/v1/avatar/musetalk")
+async def musetalk_compatible_avatar(websocket: WebSocket):
+    """MuseTalk-compatible WS used by OpenTalking avatar synthesis."""
+
+    proxy_url = _avatar_model_ws_urls(websocket).get("musetalk")
+    if proxy_url:
+        await _proxy_websocket(websocket, proxy_url)
+        return
+    await websocket.accept()
+    await websocket.send_json(
+        {
+            "type": "error",
+            "code": "musetalk_proxy_not_configured",
+            "message": "Set OMNIRT_AVATAR_MUSETALK_WS_URL to a MuseTalk WebSocket backend.",
+        }
+    )
+    await websocket.close()
 
 
 @router.websocket("/v1/avatar/realtime")

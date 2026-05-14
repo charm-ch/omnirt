@@ -3,16 +3,16 @@
 MuseTalk WebSocket server (FlashTalk protocol compatible)
 
 Same wire protocol as ``model_backends/wav2lip/wav2lip_ws_server.py`` / SoulX FlashTalk so
-OpenTalking can use ``OPENTALKING_FLASHTALK_MODE=remote`` with this endpoint.
+OpenTalking can use the same OmniRT audio2video client path for MuseTalk.
 
-Inference reuses OpenTalking's MuseTalk v1.5 stack (``MuseTalkAdapter`` + render pipeline).
-Point ``OMNIRT_MUSETALK_OPENTALKING_SRC`` at your OpenTalking checkout ``src`` directory if it
-is not next to the OmniRT root (``../opentalking/src``).
+Inference is intentionally OmniRT-side. This service imports the upstream MuseTalk source tree,
+loads the MuseTalk v1.5 weights, and exposes a FlashTalk-compatible WebSocket. OpenTalking stays
+as orchestration/client code only.
 
 Environment (high level):
-  OMNIRT_MUSETALK_OPENTALKING_SRC   OpenTalking ``src`` dir (default: <omnirt>/../opentalking/src)
+  OMNIRT_MUSETALK_REPO              MuseTalk source checkout (default: <OMNIRT_HOME>/model-repos/MuseTalk)
   OMNIRT_MUSETALK_MODELS_DIR        Weight tree root (default: <omnirt>/models) — also sets
-                                    OPENTALKING_MODELS_DIR before loading OpenTalking
+                                    MuseTalk model paths during loading.
   OMNIRT_MUSETALK_DEVICE            auto | npu | npu:0 | cuda | cpu (default auto)
   OMNIRT_MUSETALK_NPU_INDEX         used when DEVICE=npu (default 0)
   OMNIRT_MUSETALK_HOST / PORT       bind (defaults 0.0.0.0:8766)
@@ -33,12 +33,15 @@ import functools
 import json
 import logging
 import os
+import shutil
+import tempfile
 import struct
 import sys
 import time
-from dataclasses import replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.request import urlretrieve
 
 import cv2
 import numpy as np
@@ -59,25 +62,144 @@ def _omnirt_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def _default_opentalking_src() -> Path:
-    return _omnirt_root().parent / "opentalking" / "src"
-
-
 def _default_models_dir() -> Path:
     return _omnirt_root() / "models"
 
 
-def _inject_opentalking_src() -> Path:
-    raw = os.environ.get("OMNIRT_MUSETALK_OPENTALKING_SRC", "").strip()
-    src = Path(raw).expanduser().resolve() if raw else _default_opentalking_src()
-    if not src.is_dir():
+def _default_musetalk_repo() -> Path:
+    home = os.environ.get("OMNIRT_HOME", "").strip()
+    omnirt_home = Path(home).expanduser().resolve() if home else _omnirt_root() / ".omnirt"
+    return omnirt_home / "model-repos" / "MuseTalk"
+
+
+def _musetalk_repo() -> Path:
+    raw = os.environ.get("OMNIRT_MUSETALK_REPO", "").strip()
+    repo = Path(raw).expanduser().resolve() if raw else _default_musetalk_repo()
+    if not (repo / "musetalk").is_dir():
         raise RuntimeError(
-            f"OpenTalking src not found: {src} — clone opentalking or set OMNIRT_MUSETALK_OPENTALKING_SRC"
+            f"MuseTalk source checkout not found: {repo}. "
+            "Run `omnirt runtime install musetalk --device cuda` or set OMNIRT_MUSETALK_REPO "
+            "to a MuseTalk checkout containing the musetalk/ package."
         )
-    s = str(src)
+    return repo
+
+
+def _inject_musetalk_repo() -> Path:
+    repo = _musetalk_repo()
+    s = str(repo)
     if s not in sys.path:
         sys.path.insert(0, s)
-    return src
+    return repo
+
+
+def _models_dir() -> Path:
+    return Path(
+        os.environ.get("OMNIRT_MUSETALK_MODELS_DIR", str(_default_models_dir()))
+    ).expanduser().resolve()
+
+
+def _require_file(path: Path, label: str) -> Path:
+    if not path.is_file():
+        raise RuntimeError(f"Missing {label}: {path}")
+    return path
+
+
+def _require_dir(path: Path, label: str) -> Path:
+    if not path.is_dir():
+        raise RuntimeError(f"Missing {label}: {path}")
+    return path
+
+
+def _check_model_layout(models_dir: Path) -> None:
+    _require_file(models_dir / "musetalk" / "pytorch_model.bin", "MuseTalk UNet weights")
+    _require_file(models_dir / "musetalk" / "musetalk.json", "MuseTalk UNet config")
+    _require_dir(models_dir / "sd-vae-ft-mse", "MuseTalk VAE directory")
+    _require_file(
+        models_dir / "sd-vae-ft-mse" / "diffusion_pytorch_model.bin",
+        "MuseTalk VAE weights",
+    )
+    _require_file(models_dir / "whisper" / "tiny.pt", "Whisper tiny checkpoint")
+    _require_file(models_dir / "dwpose" / "dw-ll_ucoco_384.pth", "DWPose checkpoint")
+    _require_file(models_dir / "face-parse-bisenet" / "79999_iter.pth", "face parsing checkpoint")
+    _ensure_face_parse_resnet(models_dir)
+
+
+def _ensure_face_parse_resnet(models_dir: Path) -> Path:
+    target = models_dir / "face-parse-bisenet" / "resnet18-5c106cde.pth"
+    if target.is_file():
+        return target
+
+    torchvision_cache = Path.home() / ".cache" / "torch" / "hub" / "checkpoints" / target.name
+    if torchvision_cache.is_file():
+        shutil.copy2(torchvision_cache, target)
+        return target
+
+    url = "https://download.pytorch.org/models/resnet18-5c106cde.pth"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    LOG.info("Downloading face-parse ResNet18 weights: %s -> %s", url, target)
+    urlretrieve(url, target)
+    return _require_file(target, "face parsing ResNet18 checkpoint")
+
+
+def _prepare_repo_model_links(repo: Path, models_dir: Path) -> None:
+    """Make upstream MuseTalk hard-coded ./models paths resolve to OmniRT's model root.
+
+    Several upstream helpers keep default paths such as ./models/dwpose/... and
+    ./models/face-parse-bisent/.... Running with cwd=repo and placing symlinks
+    avoids vendoring or mutating upstream source files.
+    """
+    repo_models = repo / "models"
+    repo_models.mkdir(parents=True, exist_ok=True)
+    links = {
+        "musetalk": models_dir / "musetalk",
+        "sd-vae-ft-mse": models_dir / "sd-vae-ft-mse",
+        "whisper": models_dir / "whisper",
+        "dwpose": models_dir / "dwpose",
+        # Upstream misspells this directory as "bisent"; OpenTalking/OmniRT
+        # model layout uses the clearer "bisenet".
+        "face-parse-bisent": models_dir / "face-parse-bisenet",
+    }
+    for name, target in links.items():
+        _require_dir(target, f"MuseTalk model directory {name}")
+        link = repo_models / name
+        if link.exists() or link.is_symlink():
+            if link.resolve() != target.resolve():
+                LOG.warning("MuseTalk repo model path already exists; keeping it: %s", link)
+            continue
+        link.symlink_to(target, target_is_directory=True)
+
+
+def _temporary_cwd(path: Path):
+    class _Cwd:
+        def __enter__(self) -> None:
+            self.previous = Path.cwd()
+            os.chdir(path)
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            os.chdir(self.previous)
+
+    return _Cwd()
+
+
+def _detect_face_box_fallback(repo: Path, image_path: Path) -> tuple[int, int, int, int]:
+    with _temporary_cwd(repo):
+        from musetalk.utils.face_detection import FaceAlignment, LandmarksType
+
+        s3fd_path = _models_dir() / "wav2lip" / "s3fd.pth"
+        if s3fd_path.is_file():
+            os.environ.setdefault("FACE_ALIGNMENT_DETECTOR_PATH", str(s3fd_path))
+        detector = FaceAlignment(LandmarksType._2D, flip_input=False, device=_inference_device_str())
+        frame = cv2.imread(str(image_path))
+        if frame is None:
+            raise RuntimeError(f"Could not read ref_image for fallback face detection: {image_path}")
+        boxes = detector.get_detections_for_batch(np.asarray([frame]))
+        box = boxes[0] if boxes else None
+        if box is None:
+            raise RuntimeError("MuseTalk fallback face detector could not find a face in ref_image")
+        x1, y1, x2, y2 = [int(v) for v in box]
+        if x2 <= x1 or y2 <= y1:
+            raise RuntimeError(f"MuseTalk fallback face box is invalid: {(x1, y1, x2, y2)}")
+        return x1, y1, x2, y2
 
 
 def _decode_init_ref_image(msg: dict) -> tuple[np.ndarray | None, str | None]:
@@ -207,38 +329,16 @@ def _inference_device_str() -> str:
     return raw
 
 
-def _normalize_videoframe_rows(
-    frames: list[Any],
-    target: int,
-) -> list[Any]:
-    """Ensure exactly ``target`` frames for FlashTalk VIDX (pad / trim)."""
-    if len(frames) == target:
-        return frames
-    if not frames:
-        raise RuntimeError("MuseTalk produced zero frames for this chunk")
-    if len(frames) < target:
-        last = frames[-1]
-        while len(frames) < target:
-            frames.append(
-                replace(
-                    last,
-                    data=last.data.copy(),
-                    timestamp_ms=float(last.timestamp_ms),
-                )
-            )
-        return frames
-    return frames[:target]
-
-
-_ADAPTER: Any = None
-
-
-def _ensure_models_env() -> Path:
-    models_dir = Path(
-        os.environ.get("OMNIRT_MUSETALK_MODELS_DIR", str(_default_models_dir()))
-    ).expanduser().resolve()
-    os.environ["OPENTALKING_MODELS_DIR"] = str(models_dir)
-    return models_dir
+@dataclass
+class MuseTalkSessionState:
+    base_frame: np.ndarray
+    face_box: tuple[int, int, int, int]
+    latent_cycle: list[torch.Tensor]
+    frame_cycle: list[np.ndarray]
+    mask_cycle: list[np.ndarray]
+    mask_coords_cycle: list[tuple[int, int, int, int]]
+    frame_cursor: int = 0
+    audio_context: np.ndarray | None = None
 
 
 def _patch_openai_whisper_torch_load() -> None:
@@ -273,118 +373,245 @@ def _patch_openai_whisper_torch_load() -> None:
     LOG.info("Patched openai-whisper load_model to use torch.load(weights_only=False) for legacy checkpoints")
 
 
-def _get_adapter() -> Any:
-    global _ADAPTER
-    if _ADAPTER is not None:
-        return _ADAPTER
-    _inject_opentalking_src()
-    _ensure_models_env()
-    _patch_openai_whisper_torch_load()
-    dev = _inference_device_str()
-    os.environ["OPENTALKING_TORCH_DEVICE"] = dev
+def _patch_torch_load_weights_only() -> None:
+    if getattr(torch, "_omnirt_musetalk_weights_only_patch", False):
+        return
 
-    from opentalking.models.musetalk.adapter import MuseTalkAdapter
+    _orig_torch_load = torch.load
 
-    ad = MuseTalkAdapter()
-    ad.load_model(dev)
-    if not ad.is_v15:
-        raise RuntimeError(
-            "MuseTalk v1.5 weights not found. Under OPENTALKING_MODELS_DIR expect OpenTalking layout: "
-            "musetalk/{pytorch_model.bin,musetalk.json}, sd-vae-ft-mse/, whisper/tiny.pt, "
-            "dwpose/dw-ll_ucoco_384.pth, face-parse-bisenet/79999_iter.pth — see README."
+    def _torch_load_wrapped(*args: Any, **kwargs: Any) -> Any:
+        kw = dict(kwargs)
+        kw.setdefault("weights_only", False)
+        return _orig_torch_load(*args, **kw)
+
+    torch.load = _torch_load_wrapped  # type: ignore[assignment]
+    torch._omnirt_musetalk_weights_only_patch = True  # type: ignore[attr-defined]
+    LOG.info("Patched torch.load to default weights_only=False for legacy MuseTalk checkpoints")
+
+
+class MuseTalkRuntime:
+    def __init__(self) -> None:
+        self.repo = _inject_musetalk_repo()
+        self.models_dir = _models_dir()
+        _check_model_layout(self.models_dir)
+        _prepare_repo_model_links(self.repo, self.models_dir)
+        self.device = torch.device(_inference_device_str())
+        self.batch_size = max(1, int(os.environ.get("OMNIRT_MUSETALK_BATCH_SIZE", "4")))
+        self.bbox_shift = int(os.environ.get("OMNIRT_MUSETALK_BBOX_SHIFT", "0"))
+        self.audio_context_samples = max(
+            0,
+            int(os.environ.get("OMNIRT_MUSETALK_AUDIO_CONTEXT_SAMPLES", str(SAMPLE_RATE))),
         )
-    ad.warmup()
-    _ADAPTER = ad
-    return ad
+        self.vae: Any = None
+        self.unet: Any = None
+        self.pe: Any = None
+        self.audio_processor: Any = None
+        self.face_parser: Any = None
+        self._load()
+
+    def _load(self) -> None:
+        os.environ.setdefault("FFMPEG_PATH", str(self.repo / "ffmpeg-6.1-amd64-static"))
+        _patch_torch_load_weights_only()
+        _patch_openai_whisper_torch_load()
+        with _temporary_cwd(self.repo):
+            from musetalk.models.unet import PositionalEncoding, UNet
+            from musetalk.models.vae import VAE
+            from musetalk.utils.face_parsing import FaceParsing
+            from musetalk.whisper.audio2feature import Audio2Feature
+
+            self.audio_processor = Audio2Feature(model_path=str(self.models_dir / "whisper" / "tiny.pt"))
+            self.vae = VAE(model_path=str(self.models_dir / "sd-vae-ft-mse"))
+            self.unet = UNet(
+                unet_config=str(self.models_dir / "musetalk" / "musetalk.json"),
+                model_path=str(self.models_dir / "musetalk" / "pytorch_model.bin"),
+                device=self.device,
+            )
+            self.pe = PositionalEncoding(d_model=384)
+            self.face_parser = FaceParsing()
+
+        self.pe = self.pe.to(self.device).half()
+        self.vae.vae = self.vae.vae.to(self.device).half()
+        self.unet.model = self.unet.model.to(self.device).half()
+        self.unet.device = self.device
+        self.unet.model.eval()
+        self.vae.vae.eval()
+        LOG.info("Loaded MuseTalk runtime repo=%s models=%s device=%s", self.repo, self.models_dir, self.device)
+
+    def prepare_session(self, base_frame: np.ndarray) -> MuseTalkSessionState:
+        with _temporary_cwd(self.repo):
+            with tempfile.TemporaryDirectory(prefix="omnirt-musetalk-ref-") as tmp:
+                image_path = Path(tmp) / "00000000.png"
+                cv2.imwrite(str(image_path), base_frame)
+                frame = cv2.imread(str(image_path))
+                if frame is None:
+                    raise RuntimeError("MuseTalk could not reload temporary ref_image")
+                try:
+                    from musetalk.utils.preprocessing import coord_placeholder, get_landmark_and_bbox
+
+                    coords, frames = get_landmark_and_bbox([str(image_path)], self.bbox_shift)
+                    face_box = coords[0]
+                    if face_box == coord_placeholder:
+                        raise RuntimeError("MuseTalk could not detect a usable face box in ref_image")
+                    x1, y1, x2, y2 = [int(v) for v in face_box]
+                    working_frame = frames[0].copy()
+                except ModuleNotFoundError as exc:
+                    LOG.warning(
+                        "MuseTalk preprocessing fallback: optional dependency missing (%s), "
+                        "using SFD-only face box detection",
+                        exc.name or str(exc),
+                    )
+                    x1, y1, x2, y2 = _detect_face_box_fallback(self.repo, image_path)
+                    working_frame = frame.copy()
+            crop_frame = working_frame[y1:y2, x1:x2]
+            if crop_frame.size == 0:
+                raise RuntimeError(f"MuseTalk face crop is empty: {(x1, y1, x2, y2)}")
+            resized_crop = cv2.resize(crop_frame, (256, 256), interpolation=cv2.INTER_LANCZOS4)
+            latent = self.vae.get_latents_for_unet(resized_crop).to(self.device)
+            mask, crop_box = self._prepare_blend_material(working_frame, (x1, y1, x2, y2))
+
+        return MuseTalkSessionState(
+            base_frame=working_frame.copy(),
+            face_box=(x1, y1, x2, y2),
+            latent_cycle=[latent],
+            frame_cycle=[working_frame.copy()],
+            mask_cycle=[mask],
+            mask_coords_cycle=[tuple(int(v) for v in crop_box)],
+        )
+
+    def _prepare_blend_material(
+        self,
+        image: np.ndarray,
+        face_box: tuple[int, int, int, int],
+        *,
+        upper_boundary_ratio: float = 0.5,
+        expand: float = 1.2,
+    ) -> tuple[np.ndarray, tuple[int, int, int, int]]:
+        from PIL import Image
+
+        with _temporary_cwd(self.repo):
+            from musetalk.utils.blending import face_seg, get_crop_box
+
+            body = Image.fromarray(image[:, :, ::-1])
+            x1, y1, x2, y2 = face_box
+            crop_box, _ = get_crop_box(face_box, expand)
+            x_s, y_s, x_e, y_e = crop_box
+
+            face_large = body.crop(crop_box)
+            ori_shape = face_large.size
+            mask_image = face_seg(face_large, fp=self.face_parser)
+            if mask_image is None:
+                raise RuntimeError("MuseTalk face parsing failed for ref_image")
+            mask_small = mask_image.crop((x1 - x_s, y1 - y_s, x2 - x_s, y2 - y_s))
+            mask_image = Image.new("L", ori_shape, 0)
+            mask_image.paste(mask_small, (x1 - x_s, y1 - y_s, x2 - x_s, y2 - y_s))
+
+            width, height = mask_image.size
+            top_boundary = int(height * upper_boundary_ratio)
+            modified_mask_image = Image.new("L", ori_shape, 0)
+            modified_mask_image.paste(
+                mask_image.crop((0, top_boundary, width, height)),
+                (0, top_boundary),
+            )
+            blur_kernel_size = int(0.1 * ori_shape[0] // 2 * 2) + 1
+            mask_array = cv2.GaussianBlur(
+                np.array(modified_mask_image),
+                (blur_kernel_size, blur_kernel_size),
+                0,
+            )
+            return mask_array, tuple(int(v) for v in crop_box)
+
+    def render_chunk(
+        self,
+        state: MuseTalkSessionState,
+        pcm_int16: np.ndarray,
+        *,
+        slice_len: int,
+        fps: int,
+    ) -> list[np.ndarray]:
+        if state.audio_context is not None and state.audio_context.size:
+            audio_for_features = np.concatenate([state.audio_context, pcm_int16])
+            context_samples = int(state.audio_context.shape[0])
+        else:
+            audio_for_features = pcm_int16
+            context_samples = 0
+        state.audio_context = audio_for_features[-self.audio_context_samples :].copy()
+
+        with tempfile.NamedTemporaryFile(prefix="omnirt-musetalk-audio-", suffix=".wav") as wav:
+            import soundfile as sf
+
+            sf.write(wav.name, audio_for_features.astype(np.float32) / 32768.0, SAMPLE_RATE)
+            features = self.audio_processor.audio2feat(wav.name)
+
+        context_frames = int(round(context_samples * fps / SAMPLE_RATE))
+        start_frame = max(0, context_frames)
+        chunks = self.audio_processor.feature2chunks(features, fps=fps)
+        chunks = chunks[start_frame : start_frame + slice_len]
+        if not chunks:
+            raise RuntimeError("MuseTalk audio feature extraction produced zero chunks")
+        while len(chunks) < slice_len:
+            chunks.append(chunks[-1])
+        chunks = [torch.from_numpy(np.asarray(chunk)).float() for chunk in chunks]
+
+        frames: list[np.ndarray] = []
+        timesteps = torch.tensor([0], device=self.device)
+        with _temporary_cwd(self.repo):
+            from musetalk.utils.blending import get_image_blending
+            from musetalk.utils.utils import datagen
+
+            gen = datagen(chunks, state.latent_cycle, batch_size=self.batch_size, device=str(self.device))
+            with torch.no_grad():
+                for whisper_batch, latent_batch in gen:
+                    audio_feature_batch = whisper_batch.to(device=self.device, dtype=self.unet.model.dtype)
+                    audio_feature_batch = self.pe(audio_feature_batch)
+                    latent_batch = latent_batch.to(device=self.device, dtype=self.unet.model.dtype)
+                    pred_latents = self.unet.model(
+                        latent_batch,
+                        timesteps,
+                        encoder_hidden_states=audio_feature_batch,
+                    ).sample
+                    recon = self.vae.decode_latents(pred_latents)
+                    for res_frame in recon:
+                        idx = state.frame_cursor % len(state.frame_cycle)
+                        x1, y1, x2, y2 = state.face_box
+                        try:
+                            face = cv2.resize(res_frame.astype(np.uint8), (x2 - x1, y2 - y1))
+                        except Exception:
+                            continue
+                        out = get_image_blending(
+                            state.frame_cycle[idx].copy(),
+                            face,
+                            state.face_box,
+                            state.mask_cycle[idx],
+                            state.mask_coords_cycle[idx],
+                        )
+                        frames.append(out)
+                        state.frame_cursor += 1
+                        if len(frames) >= slice_len:
+                            return frames
+        if not frames:
+            raise RuntimeError("MuseTalk produced zero frames for this chunk")
+        while len(frames) < slice_len:
+            frames.append(frames[-1].copy())
+        return frames[:slice_len]
 
 
-def _preload_adapter() -> None:
+_RUNTIME: MuseTalkRuntime | None = None
+
+
+def _get_runtime() -> MuseTalkRuntime:
+    global _RUNTIME
+    if _RUNTIME is None:
+        _RUNTIME = MuseTalkRuntime()
+    return _RUNTIME
+
+
+def _preload_runtime() -> None:
     raw = os.environ.get("OMNIRT_MUSETALK_PRELOAD", "").strip().lower()
     if raw not in {"1", "true", "yes", "on"}:
         return
-    LOG.info("OMNIRT_MUSETALK_PRELOAD: loading MuseTalk v1.5 at startup...")
-    _ = _get_adapter()
+    LOG.info("OMNIRT_MUSETALK_PRELOAD: loading MuseTalk runtime at startup...")
+    _ = _get_runtime()
     LOG.info("OMNIRT_MUSETALK_PRELOAD: startup load complete.")
-
-
-def _build_session_state(adapter: Any, base_frame: np.ndarray, fps: int) -> Any:
-    from opentalking.core.interfaces.avatar_asset import AvatarManifest
-    from opentalking.models.common.frame_avatar import FrameAvatarState
-
-    h, w = base_frame.shape[:2]
-    manifest = AvatarManifest(
-        id="omnirt-musetalk-ws",
-        model_type="musetalk",
-        fps=int(fps),
-        sample_rate=SAMPLE_RATE,
-        width=int(w),
-        height=int(h),
-        version="1",
-        name="OmniRT MuseTalk WS",
-        metadata={},
-    )
-    avatar_path = Path(
-        os.environ.get(
-            "OMNIRT_MUSETALK_SESSION_AVATAR_PATH",
-            "/tmp/omnirt-musetalk-ws-session",
-        )
-    ).expanduser()
-    state = FrameAvatarState(
-        manifest=manifest,
-        frames=[base_frame.copy()],
-        avatar_path=avatar_path,
-        frame_paths=[],
-        extra={
-            "preview_frame": base_frame.copy(),
-            "preview_frame_index": 0,
-            "freeze_speaking_to_preview": False,
-        },
-    )
-    adapter._fps = int(fps)
-    adapter._precompute_avatar_data(state)
-    state.extra["audio_context_pcm"] = np.zeros(0, dtype=np.int16)
-    state.extra["feature_overlap_tail"] = None
-    state.extra["prediction_overlap_tail"] = []
-    state.extra["audio_total_samples"] = 0
-    state.extra["musetalk_prev_energy"] = 0.0
-    state.extra["closed_prediction_cache"] = {}
-    return state
-
-
-def _prepare_session_blocking(adapter: Any, base_frame: np.ndarray, fps: int) -> Any:
-    return _build_session_state(adapter, base_frame, fps)
-
-
-def _synthesize_chunk_blocking(
-    adapter: Any,
-    state: Any,
-    pcm_int16: np.ndarray,
-    *,
-    slice_len: int,
-    fps: int,
-    frame_index_cursor: int,
-) -> tuple[list[np.ndarray], int]:
-    from opentalking.core.types.frames import AudioChunk
-    from opentalking.worker.pipeline.render_pipeline import prepare_rendered_chunk_sync
-
-    n_samples = int(pcm_int16.shape[0])
-    duration_ms = n_samples * 1000.0 / float(SAMPLE_RATE)
-    chunk = AudioChunk(
-        data=np.ascontiguousarray(pcm_int16),
-        sample_rate=SAMPLE_RATE,
-        duration_ms=float(duration_ms),
-    )
-    rendered = prepare_rendered_chunk_sync(
-        adapter,
-        state,
-        chunk,
-        frame_index_start=frame_index_cursor,
-        speech_frame_index_start=frame_index_cursor,
-        streaming=True,
-    )
-    rows = _normalize_videoframe_rows(rendered.frames, slice_len)
-    bgr_list = [f.data.copy() for f in rows]
-    return bgr_list, int(rendered.next_frame_idx)
 
 
 async def _handler(websocket) -> None:
@@ -396,10 +623,9 @@ async def _handler(websocket) -> None:
 
     session_active = False
     base_frame: np.ndarray | None = None
-    state: Any | None = None
+    state: MuseTalkSessionState | None = None
     height = width = 0
     chunk_idx = 0
-    frame_cursor = 0
 
     try:
         async for message in websocket:
@@ -414,7 +640,6 @@ async def _handler(websocket) -> None:
 
                 if msg_type == "init":
                     chunk_idx = 0
-                    frame_cursor = 0
                     base_frame, err = _decode_init_ref_image(msg)
                     if err is not None or base_frame is None:
                         await websocket.send(
@@ -433,10 +658,10 @@ async def _handler(websocket) -> None:
                     height, width = base_frame.shape[:2]
                     loop = asyncio.get_running_loop()
                     try:
-                        adapter = _get_adapter()
+                        runtime = _get_runtime()
                         state = await loop.run_in_executor(
                             None,
-                            functools.partial(_prepare_session_blocking, adapter, base_frame, fps),
+                            functools.partial(runtime.prepare_session, base_frame),
                         )
                     except Exception as exc:
                         LOG.exception("init session prepare failed: %s", exc)
@@ -474,7 +699,6 @@ async def _handler(websocket) -> None:
                     base_frame = None
                     state = None
                     chunk_idx = 0
-                    frame_cursor = 0
                     await websocket.send(json.dumps({"type": "close_ok"}))
 
                 else:
@@ -518,28 +742,24 @@ async def _handler(websocket) -> None:
                 pcm_i16 = np.frombuffer(pcm, dtype=np.int16)
                 t_start = time.perf_counter()
                 loop = asyncio.get_running_loop()
-                adapter = _get_adapter()
+                runtime = _get_runtime()
 
-                def _run() -> tuple[list[np.ndarray], int]:
-                    return _synthesize_chunk_blocking(
-                        adapter,
+                def _run() -> list[np.ndarray]:
+                    return runtime.render_chunk(
                         state,
                         pcm_i16,
                         slice_len=slice_len,
                         fps=fps,
-                        frame_index_cursor=frame_cursor,
                     )
 
                 try:
-                    frames_bgr, next_idx = await loop.run_in_executor(None, _run)
+                    frames_bgr = await loop.run_in_executor(None, _run)
                 except Exception as exc:
                     LOG.exception("MuseTalk chunk failed: %s", exc)
                     await websocket.send(
                         json.dumps({"type": "error", "message": f"generate failed: {exc}"})
                     )
                     continue
-
-                frame_cursor = next_idx
 
                 jpeg_parts: list[bytes] = []
                 for fb in frames_bgr:
@@ -638,7 +858,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
     LOG.info("MuseTalk inference device=%s", inf)
     try:
-        _preload_adapter()
+        _preload_runtime()
     except Exception as exc:
         LOG.error("Startup load failed: %s", exc)
         return 1

@@ -1,0 +1,26 @@
+name: musetalk
+device: cuda
+profile: cuda
+
+sources:
+  repo_url: https://github.com/TMElyralab/MuseTalk.git
+
+paths:
+  runtime_dir: ${OMNIRT_HOME}/runtimes/musetalk/cuda
+  repo_dir: ${OMNIRT_HOME}/model-repos/MuseTalk
+
+runtime:
+  type: venv
+  python: "3.10"
+  nproc_per_node: 1
+
+install:
+  requirements_file: ${OMNIRT_ROOT}/model_backends/musetalk/requirements-musetalk-gpu.txt
+  repo_marker_dir: musetalk
+  pip_index_url: https://pypi.tuna.tsinghua.edu.cn/simple
+  pip_extra_index_url: https://download.pytorch.org/whl/cu124
+  hf_endpoint: https://hf-mirror.com
+
+launch:
+  server_path: ${OMNIRT_ROOT}/model_backends/musetalk/musetalk_ws_server.py
+
