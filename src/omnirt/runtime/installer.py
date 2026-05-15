@@ -76,7 +76,8 @@ class RuntimeInstaller:
         recreate_venv: bool = False,
     ) -> RuntimeInstallResult:
         self._require_local_file(self.manifest.requirements_file, "requirements")
-        self._require_local_file(self.manifest.env_script, "Ascend/CANN environment script")
+        if self.manifest.env_script is not None:
+            self._require_local_file(self.manifest.env_script, "Ascend/CANN environment script")
         state = RuntimeState.from_manifest(self.manifest)
 
         if dry_run:
@@ -89,27 +90,18 @@ class RuntimeInstaller:
             self.manifest.repo_url,
             self.manifest.repo_dir,
             update=update,
-            marker_dir="flash_talk",
-            label="SoulX-FlashTalk checkout",
+            marker_dir=self.manifest.repo_marker_dir,
+            label=self._repo_label,
         )
-        self._apply_soulx_ascend_patch(self.manifest.repo_dir)
-        if _patch_soulx_wan_t5_for_cpu_torch(self.manifest.repo_dir):
-            self.commands.append(["patch", "SoulX-FlashTalk", "flash_talk/wan/modules/t5.py", "import-time device default"])
+        if self.manifest.name == "flashtalk":
+            self._apply_soulx_ascend_patch(self.manifest.repo_dir)
+            if _patch_soulx_wan_t5_for_cpu_torch(self.manifest.repo_dir):
+                self.commands.append(["patch", "SoulX-FlashTalk", "flash_talk/wan/modules/t5.py", "import-time device default"])
         self._prepare_venv(recreate=recreate_venv)
-        self._run([str(self.manifest.python_path), "-m", "pip", "install", "-U", "pip", "setuptools", "wheel"])
-        self._run(
-            [
-                str(self.manifest.python_path),
-                "-m",
-                "pip",
-                "install",
-                "-i",
-                self.manifest.pip_index_url,
-                "-r",
-                str(self.manifest.requirements_file),
-            ]
-        )
-        self._prepare_checkpoints(update=update)
+        self._run(self._bootstrap_pip_command())
+        self._install_requirements()
+        if self.manifest.checkpoint_url or self.manifest.wav2vec_repo_id:
+            self._prepare_checkpoints(update=update)
 
         state_path = write_state(state)
         return RuntimeInstallResult(state=state, state_path=state_path, commands=self.commands)
@@ -120,19 +112,24 @@ class RuntimeInstaller:
                 self.manifest.repo_url,
                 self.manifest.repo_dir,
                 update=update,
-                marker_dir="flash_talk",
-                label="SoulX-FlashTalk checkout",
+                marker_dir=self.manifest.repo_marker_dir,
+                label=self._repo_label,
             ),
-            [
-                "git",
-                "-C",
-                str(self.manifest.repo_dir),
-                "apply",
-                str(project_root() / "model_backends/flashtalk/patches/soulx-flashtalk-ascend-omnirt.patch"),
-                "(skip if reverse --check passes: already applied; skip if no .git)",
-            ],
-            ["patch", "SoulX-FlashTalk", "flash_talk/wan/modules/t5.py", "import-time device default (if needed)"],
         ]
+        if self.manifest.name == "flashtalk":
+            commands.extend(
+                [
+                    [
+                        "git",
+                        "-C",
+                        str(self.manifest.repo_dir),
+                        "apply",
+                        str(project_root() / "model_backends/flashtalk/patches/soulx-flashtalk-ascend-omnirt.patch"),
+                        "(skip if reverse --check passes: already applied; skip if no .git)",
+                    ],
+                    ["patch", "SoulX-FlashTalk", "flash_talk/wan/modules/t5.py", "import-time device default (if needed)"],
+                ]
+            )
         if recreate_venv and self.manifest.venv_dir.exists():
             commands.append(["recreate-venv", str(self.manifest.venv_dir)])
         elif self.manifest.python_path.is_file():
@@ -141,26 +138,22 @@ class RuntimeInstaller:
             commands.append(["python3", "-m", "venv", str(self.manifest.venv_dir)])
         commands.extend(
             [
-            [str(self.manifest.python_path), "-m", "pip", "install", "-U", "pip", "setuptools", "wheel"],
-            [
-                str(self.manifest.python_path),
-                "-m",
-                "pip",
-                "install",
-                "-i",
-                self.manifest.pip_index_url,
-                "-r",
-                str(self.manifest.requirements_file),
-            ],
-            self._plan_clone_or_update(
-                self.manifest.checkpoint_url,
-                self.manifest.resolved_ckpt_dir,
-                update=update,
-                marker_dir=None,
-                label="FlashTalk checkpoint",
-            ),
-        ]
+                self._bootstrap_pip_command(),
+                self._planned_install_requirements_command(),
+            ]
         )
+        if self.manifest.checkpoint_url:
+            commands.append(
+                self._plan_clone_or_update(
+                    self.manifest.checkpoint_url,
+                    self.manifest.resolved_ckpt_dir,
+                    update=update,
+                    marker_dir=None,
+                    label=self._checkpoint_label,
+                )
+            )
+        if not self.manifest.wav2vec_repo_id:
+            return commands
         wav2vec = self.manifest.resolved_wav2vec_dir
         if self._has_content(wav2vec):
             commands.append(["skip", "wav2vec", str(wav2vec), "already exists"])
@@ -176,6 +169,79 @@ class RuntimeInstaller:
             )
         return commands
 
+    @property
+    def _repo_label(self) -> str:
+        if self.manifest.name == "flashtalk":
+            return "SoulX-FlashTalk checkout"
+        if self.manifest.name == "musetalk":
+            return "MuseTalk checkout"
+        return f"{self.manifest.name} checkout"
+
+    @property
+    def _checkpoint_label(self) -> str:
+        if self.manifest.name == "flashtalk":
+            return "FlashTalk checkpoint"
+        return f"{self.manifest.name} checkpoint"
+
+    def _install_requirements_command(self) -> list[str]:
+        command = [
+            str(self.manifest.python_path),
+            "-m",
+            "pip",
+            "install",
+            "-i",
+            self.manifest.pip_index_url,
+        ]
+        if self.manifest.pip_extra_index_url:
+            command.extend(["--extra-index-url", self.manifest.pip_extra_index_url])
+        command.extend(["-r", str(self.manifest.requirements_file)])
+        return command
+
+    def _bootstrap_pip_command(self) -> list[str]:
+        command = [
+            str(self.manifest.python_path),
+            "-m",
+            "pip",
+            "install",
+            "-U",
+            "pip",
+            "setuptools",
+            "wheel",
+        ]
+        if self.manifest.pip_index_url:
+            command.extend(["-i", self.manifest.pip_index_url])
+        return command
+
+    def _install_requirements(self) -> None:
+        uv = shutil.which("uv")
+        if uv:
+            self._run(self._uv_install_requirements_command(uv))
+            return
+        self._run(self._install_requirements_command())
+
+    def _planned_install_requirements_command(self) -> list[str]:
+        uv = shutil.which("uv")
+        if uv:
+            return self._uv_install_requirements_command(uv)
+        return self._install_requirements_command()
+
+    def _uv_install_requirements_command(self, uv: str) -> list[str]:
+        command = [
+            uv,
+            "pip",
+            "install",
+            "--python",
+            str(self.manifest.python_path),
+            "--index-strategy",
+            "unsafe-best-match",
+            "-i",
+            self.manifest.pip_index_url,
+        ]
+        if self.manifest.pip_extra_index_url:
+            command.extend(["--extra-index-url", self.manifest.pip_extra_index_url])
+        command.extend(["-r", str(self.manifest.requirements_file)])
+        return command
+
     def _prepare_venv(self, *, recreate: bool) -> None:
         if recreate and self.manifest.venv_dir.exists():
             shutil.rmtree(self.manifest.venv_dir)
@@ -185,14 +251,17 @@ class RuntimeInstaller:
         self._run(["python3", "-m", "venv", str(self.manifest.venv_dir)])
 
     def _prepare_checkpoints(self, *, update: bool) -> None:
-        self.manifest.resolved_ckpt_dir.parent.mkdir(parents=True, exist_ok=True)
-        self._clone_or_update(
-            self.manifest.checkpoint_url,
-            self.manifest.resolved_ckpt_dir,
-            update=update,
-            marker_dir=None,
-            label="FlashTalk checkpoint",
-        )
+        if self.manifest.checkpoint_url:
+            self.manifest.resolved_ckpt_dir.parent.mkdir(parents=True, exist_ok=True)
+            self._clone_or_update(
+                self.manifest.checkpoint_url,
+                self.manifest.resolved_ckpt_dir,
+                update=update,
+                marker_dir=None,
+                label=self._checkpoint_label,
+            )
+        if not self.manifest.wav2vec_repo_id:
+            return
         wav2vec = self.manifest.resolved_wav2vec_dir
         if self._has_content(wav2vec):
             self.commands.append(["skip", "wav2vec", str(wav2vec), "already exists"])

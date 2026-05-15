@@ -2,7 +2,7 @@
 
 OmniRT 在 `model_backends/musetalk/musetalk_ws_server.py` 中提供与 **FlashTalk / Wav2Lip WS** 相同的 WebSocket 协议（JSON `init` / `init_ok`，二进制 `AUDI` 音频块、`VIDX` JPEG 视频块）。**OpenTalking** 在 **`OPENTALKING_FLASHTALK_MODE=remote`** 下将 **`OPENTALKING_FLASHTALK_WS_URL`** 指向本服务即可，客户端协议无需改动。
 
-推理使用 **OpenTalking** 内置的 MuseTalk v1.5 适配器（UNet / VAE / Whisper 特征等）；服务端需能通过 **`PYTHONPATH`** 找到 OpenTalking 的 `src`（启动脚本默认 `<omnirt>/../opentalking/src`，可用环境变量覆盖）。
+推理与 MuseTalk 源码加载都在 **OmniRT** 侧完成。OpenTalking 只负责模型选择、会话编排和连接本服务；MuseTalk 官方源码由 `omnirt runtime install musetalk --device <cuda|npu|cpu>` 管理。
 
 更完整的目录说明、权重布局与排错见：[`model_backends/musetalk/README.md`](https://github.com/datascale-ai/omnirt/blob/main/model_backends/musetalk/README.md)。
 
@@ -62,10 +62,11 @@ pip install -r model_backends/musetalk/requirements-musetalk-ascend.txt
 
 昇腾图编译子进程仍可能隐式依赖 **`attrs`、`psutil`、`PyYAML`** 等（已在清单中列出）；若报 `No module named 'xxx'` 再按需补装。
 
-### 4. 模型权重与 OpenTalking 源码
+### 4. MuseTalk 源码与模型权重
 
-- **权重根目录**：默认 `<omnirt>/models`，对应环境变量 **`OMNIRT_MUSETALK_MODELS_DIR`**（服务端会同步设置 **`OPENTALKING_MODELS_DIR`**）。
-- **布局**须满足 OpenTalking `resolve_musetalk_v15`（`musetalk/`、`sd-vae-ft-mse/`、`whisper/tiny.pt` 等），详见 [`model_backends/musetalk/README.md`](https://github.com/datascale-ai/omnirt/blob/main/model_backends/musetalk/README.md)。
+- **MuseTalk 源码**：推荐执行 `omnirt runtime install musetalk --device npu`，默认克隆到 `${OMNIRT_HOME}/model-repos/MuseTalk`。
+- **权重根目录**：默认 `<omnirt>/models`，对应环境变量 **`OMNIRT_MUSETALK_MODELS_DIR`**。
+- **布局**须满足 MuseTalk v1.5 加载需要（`musetalk/`、`sd-vae-ft-mse/`、`whisper/tiny.pt` 等），详见 [`model_backends/musetalk/README.md`](https://github.com/datascale-ai/omnirt/blob/main/model_backends/musetalk/README.md)。
 - **`whisper/tiny.pt`** 须为 **OpenAI `openai-whisper` 官方** 检查点（约 72MB），勿将 HuggingFace `pytorch_model.bin` 改名顶替。
 
 ### 5. 推理与常用环境变量（节选）
@@ -75,8 +76,8 @@ pip install -r model_backends/musetalk/requirements-musetalk-ascend.txt
 | `OMNIRT_MUSETALK_PYTHON` | 指向上述 venv 的 `python` |
 | `OMNIRT_MUSETALK_DEVICE` | `auto`（默认，优先 NPU） / `npu` / `cpu` |
 | `OMNIRT_MUSETALK_NPU_INDEX` | 逻辑 NPU 序号，默认 `0` |
+| `OMNIRT_MUSETALK_REPO` | MuseTalk 源码 checkout；默认 `${OMNIRT_HOME}/model-repos/MuseTalk` |
 | `OMNIRT_MUSETALK_MODELS_DIR` | 权重根目录 |
-| `OMNIRT_MUSETALK_OPENTALKING_SRC` | OpenTalking **`src`** 目录（内含 `opentalking` 包） |
 | `OMNIRT_MUSETALK_MAX_LONG_EDGE` | `init` 参考图最长边上限（默认 `768`）；`0` 表示不缩放 |
 | `OMNIRT_MUSETALK_PRELOAD` | `1` 时在监听前预加载模型，减少首连等待 |
 | `OMNIRT_MUSETALK_DEFAULT_REF_IMAGE` | 客户端 `init` 未带 `ref_image` 时的本地图片（可选） |
@@ -87,9 +88,10 @@ pip install -r model_backends/musetalk/requirements-musetalk-ascend.txt
 
 ```bash
 cd /path/to/omnirt
-export OMNIRT_MUSETALK_PYTHON=/path/to/venvs/omnirt-musetalk-ascend/bin/python
+omnirt runtime install musetalk --device npu
+export OMNIRT_MUSETALK_PYTHON=$OMNIRT_HOME/runtimes/musetalk/npu/venv/bin/python
+export OMNIRT_MUSETALK_REPO=$OMNIRT_HOME/model-repos/MuseTalk
 export OMNIRT_MUSETALK_MODELS_DIR=/path/to/omnirt/models
-export OMNIRT_MUSETALK_OPENTALKING_SRC=/path/to/opentalking/src   # 若默认 ../opentalking/src 不可用
 bash scripts/start_musetalk_ws.sh
 ```
 
