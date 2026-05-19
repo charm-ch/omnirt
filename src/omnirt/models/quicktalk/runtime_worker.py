@@ -132,8 +132,23 @@ class RealtimeV3Worker:
         checkpoint = checkpoint or (self.v2.asset_root / "quicktalk.pth")
         if not checkpoint.is_file():
             raise RuntimeError(f"QuickTalk torch checkpoint not found: {checkpoint}")
-        model = torch.jit.load(str(checkpoint), map_location=self.v2.device)
-        model.eval()
+        try:
+            model = torch.jit.load(str(checkpoint), map_location=self.v2.device)
+        except RuntimeError as exc:
+            message = str(exc)
+            if "constants.pkl" not in message and "PyTorchStreamReader" not in message:
+                raise
+            from .converter import ensure_quicktalk_pickle_types
+
+            ensure_quicktalk_pickle_types()
+            try:
+                model = torch.load(checkpoint, map_location=self.v2.device, weights_only=False)
+            except TypeError:
+                model = torch.load(checkpoint, map_location=self.v2.device)
+        if hasattr(model, "to"):
+            model = model.to(device=self.v2.device)
+        if hasattr(model, "eval"):
+            model.eval()
         return model
 
     def make_state(self) -> RealtimeV3SessionState:
